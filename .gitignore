@@ -1,0 +1,29 @@
+# Ignore environment file
+.env
+
+# Ignore all files under camel-master, but keep the folder itself
+#camel-master/**
+#!camel-master/
+
+# Ignore all files under mock_data/photos
+#mock_data/photos/**
+#!mock_data/photos/.gitkeep
+#!mock_data/photos/photos_data.json
+
+# Ignore PyCharm/IDEA project files
+.idea/
+
+# Ignore Python cache files
+__pycache__/
+**/__pycache__/
+
+# Optionally ignore compiled Python files
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore working_dir and eigent_logs.json
+eigent_logs.json
+working_dir/
+**/eigent_logs.json
+**/working_dir/

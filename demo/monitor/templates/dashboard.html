@@ -1,0 +1,1196 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN">
+
+  <head>
+
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AIOS Workforce - 任务可视化</title>
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap");
+
+      :root {
+        --bg-1: #f6e6d5;
+        --bg-2: #efe1f6;
+        --bg-3: #d9e9ff;
+        --ink-1: #0f1b2d;
+        --ink-2: #42506a;
+        --muted: #7b879d;
+        --line: #dbe1ea;
+        --glass: rgba(255, 255, 255, 0.72);
+        --shadow: 0 30px 60px rgba(12, 20, 33, 0.12);
+        --shadow-soft: 0 20px 40px rgba(12, 20, 33, 0.08);
+        --created:rgb(192, 192, 192, 0.85);
+        --assigned: #186bef;
+        --started: #fbbf24;
+        --completed: #22c55e;
+      }
+S
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+        background: linear-gradient(
+          120deg,
+          var(--bg-1) 0%,
+          var(--bg-2) 40%,
+          var(--bg-3) 100%
+        );
+
+        min-height: 100vh;
+        padding: 18px;
+        color: var(--ink-1);
+      }
+
+      .container {
+        max-width: 1400px;
+        margin: 0 auto;
+      }
+
+      .header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        margin-bottom: 18px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+      }
+
+      .logo {
+        width: 55px;
+        height: 55px;
+        border-radius: 50%;
+        background: #ffffff url("/static/logo.png") center / cover no-repeat;
+        position: relative;
+        box-shadow:
+          inset 0 0 0 1px rgba(255, 255, 255, 0.55),
+          0 10px 20px rgba(70, 80, 120, 0.18);
+      }
+
+      .logo::after {
+        content: "";
+        position: absolute;
+        inset: 8px;
+        border-radius: 50%;
+        border: 1px solid rgba(255, 255, 255, 0.7);
+        opacity: 0.7;
+      }
+
+      .brand h1 {
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 26px;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+      }
+
+      .brand p {
+        margin-top: 2px;
+        color: rgba(51, 50, 50, 0.913);
+        font-size: 14px;
+      }
+
+      .run-pill {
+        padding: 8px 14px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.7);
+        
+        font-size: 13px;
+        color: var(--ink-2);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: rgba(47, 82, 109);
+      }
+
+      .content {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+
+      .panel {
+        background: var(--glass);
+        border-radius: 20px;
+        padding: 18px;
+      }
+      .panel.panel-human {
+        background-color: rgb(222, 222, 222) !important;
+        backdrop-filter: none !important;   
+      }
+      .panel.panel-subtasks {
+        background-color: rgb(216, 230, 238) !important;
+        backdrop-filter: none !important;
+        overflow: hidden;
+      }.panel.panel-live {
+        background: var(--glass);
+        background-color: white;
+        backdrop-filter: blur(16px);
+      }
+      
+
+      .panel h2 {
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 18px;
+        margin-bottom: 8px;
+      }
+
+      .panel h3 {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+        margin: 18px 0 8px;
+      }
+
+      .task-description-card {
+        background: rgba(255, 255, 255, 0.55);
+        border-radius: 18px;
+        padding: 12px;
+        box-shadow:
+          inset 0 0 0 1px rgba(255, 255, 255, 0.35),
+          0 18px 36px rgba(12, 20, 33, 0.12);
+        border: 1px solid rgba(255, 255, 255, 0.6);
+        backdrop-filter: blur(22px) saturate(130%);
+        -webkit-backdrop-filter: blur(22px) saturate(130%);
+        position: relative;
+        overflow: hidden;
+      }
+      #oriTaskContainer {
+        margin-bottom: 9px;
+      }
+      .task-description-card::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        
+        opacity: 0.75;
+        pointer-events: none;
+      }
+
+      .description-content {
+        margin-top: 10px;
+        background: #f8f9fb;
+        padding: 16px;
+        border-radius: 12px;
+        line-height: 1.7;
+        color: var(--ink-2);
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+      }
+
+      .task-meta {
+        margin-top: 12px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .decompose-progress {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 10px;
+        border-radius: 12px;
+        background: transparent;
+        border: 1px solid transparent;
+        box-shadow: none;
+      }
+
+      .decompose-progress .progress-label {
+        font-size: 12px;
+        color: var(--ink-2);
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+      }
+
+      .decompose-progress .spinner {
+        width: 14px;
+        height: 14px;
+        border-width: 2px;
+        margin-right: 0;
+      }
+
+      .subtasks-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(220px, 1fr));
+        gap: 14px;
+
+      }
+      .subtask-placeholder {
+        opacity: 0.85;
+      }
+      .subtask-placeholder .loading {
+        padding: 24px 0;
+        text-align: center;
+        font-size: 14px;
+      }
+      .subtasks-empty {
+        display: block;
+        width: 100%;
+        max-width: 100%;
+        grid-template-columns: none;
+      }
+      .subtasks-empty .subtask-card {
+        width: 100%;
+        max-width: 100%;
+        box-sizing: border-box;
+      }
+      @media (max-width: 980px) {
+        .subtasks-grid {
+          grid-template-columns: repeat(2, minmax(220px, 1fr));
+        }
+      }
+      @media (max-width: 640px) {
+        .subtasks-grid {
+          grid-template-columns: minmax(0, 1fr);
+        }
+      }
+
+      .subtask-card {
+        padding: 14px;
+        border-radius: 16px;
+        border: 1px solid rgba(255, 255, 255, 0.6);
+        background: rgba(255, 255, 255, 0.55);
+        box-shadow:
+          inset 0 0 0 1px rgba(255, 255, 255, 0.35),
+          0 16px 32px rgba(12, 20, 33, 0.12);
+        position: relative;
+        overflow: hidden;
+        backdrop-filter: blur(20px) saturate(130%);
+        -webkit-backdrop-filter: blur(20px) saturate(130%);
+      }
+      .subtask-card .description-content {
+        font-size: 14px;
+      }
+
+      .subtask-card::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-radius: 16px;
+        background: linear-gradient(
+          120deg,
+          rgba(255, 255, 255, 0.6) 0%,
+          rgba(255, 255, 255, 0.28) 45%,
+          rgba(255, 255, 255, 0.0) 70%
+        );
+        opacity: 0.65;
+        pointer-events: none;
+      }
+
+      .subtask-id {
+        font-weight: 700;
+        font-size: 14px;
+      }
+
+      .subtask-status {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        margin: 8px 0 10px;
+      }
+
+      .status-created {
+        background: rgb(232, 232, 232);
+        color: var(--created);
+      }
+
+      .status-assigned {
+        background: rgba(18, 105, 245, 0.25);
+        color: var(--assigned);
+      }
+
+      .status-started {
+        background: rgba(251, 191, 36, 0.25);
+        color: #b45309;
+      }
+
+      .status-completed {
+        background: rgba(34, 197, 94, 0.25);
+        color: #15803d;
+      }
+
+      .subtask-worker {
+        font-size: 12px;
+        color: var(--ink-2);
+        padding: 8px 0;
+        border-top: 1px solid rgba(0, 0, 0, 0.08);
+        border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+      }
+
+      .subtask-dependencies {
+        font-size: 12px;
+        margin-top: 10px;
+      }
+
+      .dependency-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 6px;
+      }
+
+      .dependency-badge {
+        background: rgba(0, 0, 0, 0.06);
+        padding: 4px 8px;
+        border-radius: 12px;
+        font-size: 11px;
+      }
+
+      .subtask-result {
+        margin-top: 10px;
+        font-size: 12px;
+        color: var(--ink-2);
+      }
+
+      .result-content {
+        background: rgba(0, 0, 0, 0.05);
+        padding: 8px 10px;
+        border-radius: 8px;
+        margin-top: 6px;
+        max-height: 120px;
+        overflow: auto;
+        word-break: break-word;
+        scrollbar-width: thin;
+        scrollbar-color: rgba(15, 27, 45, 0.25) transparent;
+      }
+      .result-content::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+      }
+      .result-content::-webkit-scrollbar-track {
+        background: transparent;
+        border-radius: 999px;
+      }
+      .result-content::-webkit-scrollbar-thumb {
+        background: rgba(15, 27, 45, 0.22);
+        border-radius: 999px;
+        border: 2px solid transparent;
+        background-clip: content-box;
+      }
+
+
+      .feed {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        max-height: 540px;
+        overflow: auto;
+        padding-right: 6px;
+      }
+      .panel-live .feed {
+        height: 160px;
+        max-height: 320px;
+      }
+
+      .feed-card {
+        background: #ECEAF2;
+        border-radius: 14px;
+        padding: 12px 14px;
+    
+      }
+
+      .feed-title {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+        margin-bottom: 6px;
+      }
+
+      .feed-body {
+        font-size: 13px;
+        white-space: pre-wrap;
+      }
+
+      .loading {
+        text-align: center;
+        padding: 30px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .spinner {
+        display: inline-block;
+        width: 20px;
+        height: 20px;
+        border: 3px solid rgba(0, 0, 0, 0.1);
+        border-top: 3px solid #2455ff;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin-right: 10px;
+        vertical-align: middle;
+      }
+
+      @keyframes spin {
+
+        to {
+          transform: rotate(360deg);
+        }
+
+      }
+
+      @media (max-width: 1100px) {
+
+        .content {
+          grid-template-columns: 1fr;
+        }
+
+        .header {
+          flex-direction: column;
+          align-items: flex-start;
+        }
+
+      }
+
+      details[open] 
+
+      .result-panel {
+        margin-top: 14px;
+        border-radius: 10px;
+        border: 1px solid rgba(15, 27, 45, 0.08);
+        background: rgba(255, 255, 255, 0.9);
+        padding: 8px 10px;
+      }
+
+      .result-toggle {
+        cursor: pointer;
+        user-select: none;
+        font-size: 12px;
+        color: var(--ink-2);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .result-toggle::before {
+        content: ">";
+        font-size: 12px;
+        transition: transform 0.2s ease;
+      }
+
+      details[open] .result-toggle::before {
+        transform: rotate(90deg);
+      }
+
+      details .result-content {
+        margin-top: 8px;
+      }
+
+    </style>
+
+  </head>
+
+  <body>
+
+    <div class="container">
+
+      <div class="header">
+        <div class="brand">
+          <div class="logo"></div>
+          <div>
+            <h1>AIOS Workforce</h1>
+            <p>实时任务拆解与执行可视化</p>
+          </div>
+        </div>
+
+        <div class="run-pill">
+          <span class="status-dot"></span>
+          <span id="runLabel">Loading run...</span>
+        </div>
+      </div>
+
+      <div class="content">
+
+        <div class="panel panel-human">
+          <h2>Human Task</h2>
+
+          <div id="oriTaskContainer" class="task-description-card">
+            <h3>Ori Task</h3>
+            <div class="loading">
+              <span class="spinner"></span>
+              Waiting for ori task...
+            </div>
+          </div>
+          <div id="fancyTaskContainer" class="task-description-card">
+            <h3>Fancy Task</h3>
+            <div class="loading">
+              <span class="spinner"></span>
+              Waiting for fancy task...
+            </div>
+          </div>
+
+        </div>
+
+        <div class="panel panel-subtasks">
+          <h2>Subtask Board</h2>
+
+          <div id="subtasksContainer" style="display: none;">
+            <div class="subtasks-grid" id="subtasksGrid"></div>
+          </div>
+
+          <div id="subtasksEmpty" class="subtasks-grid subtasks-empty">
+            <div class="subtask-card subtask-placeholder" data-task-id="0.1">
+              <div class="loading">
+                <span class="spinner"></span>
+                Waiting for subtasks...
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel panel-live">
+          <h2>Task Live Feed</h2>
+
+          <div id="liveFeed" class="feed"></div>
+        </div>
+
+      </div>
+
+    </div>
+
+    <script>
+
+      const store = {
+        tasks: {},
+        workerRoles: {},
+        events: [],
+        seenFiles: new Set(),
+        runId: null,
+        oriTask: "",
+      };
+
+      function escapeHtml(str) {
+
+        return String(str || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+
+      }
+
+      function formatWorkerRole(role) {
+
+        const text = String(role || "").trim();
+
+        if (!text) return "";
+
+        const firstPart = text.split(":")[0].trim();
+
+        return firstPart || text;
+
+      }
+
+      function formatAgentDetail(detail, event) {
+
+        const role = formatWorkerRole(event && (event.worker_role || event.role));
+
+        if (role) return `Agent: ${role}`;
+
+        if (!detail) return detail;
+
+        const marker = "Agent:";
+
+        const idx = detail.indexOf(marker);
+
+        if (idx < 0) return detail;
+
+        const rest = detail.slice(idx + marker.length).trim();
+
+        const formatted = formatWorkerRole(rest);
+
+        return `${detail.slice(0, idx)}${marker} ${formatted}`;
+
+      }
+
+      function formatFeedDetail(event) {
+
+        if (!event) return "";
+
+
+        if (event.event_type === "agent_message") {
+
+          const message = event.message || event.description || "";
+
+          if (message) return message;
+
+        }
+
+        return formatAgentDetail(
+
+          event.description || event.result_summary || event.task_id || "",
+
+          event
+
+        );
+
+      }
+
+      function normalizeDeps(value) {
+
+        if (!value) return [];
+
+        if (Array.isArray(value)) return value;
+
+        if (typeof value === "string") {
+
+          return value
+            .replace(/[\[\]]/g, "")
+            .split(",")
+            .map((item) => item.trim().replace(/['"]/g, ""))
+            .filter(Boolean);
+        }
+
+        return [];
+
+      }
+
+      function updateTask(taskId, patch) {
+
+        if (!store.tasks[taskId]) {
+
+          store.tasks[taskId] = {
+            id: taskId,
+            status: "created",
+            description: "",
+            workerId: "",
+            workerRole: "",
+            dependencies: [],
+            resultSummary: "",
+            timestamp: "",
+            subtasks: [],
+          };
+
+        }
+
+        Object.assign(store.tasks[taskId], patch);
+
+      }
+
+      function getStatusBadge(status) {
+
+        const statusMap = {
+          created: "🎯Created",
+          decomposed: "🧩Decomposed",
+          assigned: "📌Assigned",
+          started: "⭐Started",
+          completed: "🎉Completed",
+        };
+
+        return statusMap[status] || status || "未知";
+
+      }
+
+      function renderFancyTask() {
+
+        const container = document.getElementById("fancyTaskContainer");
+
+        if (!container) return;
+
+        const task = store.tasks["0"] || {};
+
+        const fancy = task.description || "";
+        const decomposeCount = Array.isArray(task.subtasks)
+          ? task.subtasks.length
+          : 0;
+        const isDecomposed = task.status === "decomposed" || decomposeCount > 0;
+
+        if (!fancy) {
+
+          container.innerHTML = `
+            <h3>Fancy Task</h3>
+            <div class="loading">
+              <span class="spinner"></span>
+              Waiting for fancy task...
+            </div>
+          `;
+
+          return;
+
+        }
+
+        const timestamp = task.timestamp
+
+          ? new Date(task.timestamp).toLocaleString("zh-CN")
+
+          : "Unknown";
+
+        container.innerHTML = `
+
+          <h3>Fancy Task</h3>
+
+          <div class="description-content">${escapeHtml(fancy)}</div>
+
+          <div class="task-meta">
+            <span>Task ID: <strong>${escapeHtml(task.id || "0")}</strong></span>
+            <span>Created: <strong>${timestamp}</strong></span>
+            <span>Status: <strong>${getStatusBadge(task.status)}</strong></span>
+          </div>
+          <div>
+            ${
+              isDecomposed
+                ? `<span class="task-meta"><strong>🧩已拆解 ${decomposeCount} 个子任务</strong></span>`
+                : `<span class="decompose-progress">
+                    <span class="spinner"></span>
+                    <span class="progress-label">任务拆解中</span>
+                  </span>`
+            }
+          </div>
+
+        `;
+
+      }
+
+      function renderOriTask() {
+
+        const container = document.getElementById("oriTaskContainer");
+
+        if (!container) return;
+
+        const ori = store.oriTask || "";
+
+        if (!ori) {
+          container.innerHTML = `
+            <h3>Ori Task</h3>
+            <div class="loading">
+              <span class="spinner"></span>
+              Waiting for ori task...
+            </div>
+          `;
+          return;
+        }
+
+        container.innerHTML = `
+          <h3>Ori Task</h3>
+          <div class="description-content">${escapeHtml(ori)}</div>
+        `;
+
+      }
+
+      function statusClass(status) {
+
+        if (status === "assigned") return "status-assigned";
+
+        if (status === "started") return "status-started";
+
+        if (status === "completed") return "status-completed";
+
+        return "status-created";
+
+      }
+
+      function formatResultSummary(value) {
+        if (value === null || value === undefined) return "";
+        if (typeof value === "string") return value;
+        try {
+          return JSON.stringify(value, null, 2);
+        } catch (err) {
+          return String(value);
+        }
+      }
+
+      function renderSubtasks() {
+
+        const mainTask = store.tasks["0"];
+
+        if (!mainTask || !mainTask.subtasks || mainTask.subtasks.length === 0) {
+
+          return;
+
+        }
+
+        document.getElementById("subtasksEmpty").style.display = "none";
+
+        const container = document.getElementById("subtasksContainer");
+
+        const grid = document.getElementById("subtasksGrid");
+
+        container.style.display = "block";
+
+        grid.innerHTML = "";
+
+        mainTask.subtasks.forEach((subtaskId) => {
+
+          const subtask = store.tasks[subtaskId] || {};
+
+          const statusClassName = `subtask-status ${statusClass(
+
+            subtask.status || "created"
+
+          )}`;
+
+          const dependencies = subtask.dependencies || [];
+
+          const depHtml =
+
+            dependencies.length > 0
+
+              ? `<div class="subtask-dependencies">
+
+                <strong>任务依赖:</strong>
+
+                <div class="dependency-list">
+
+                  ${dependencies
+
+                    .map(
+
+                      (dep) =>
+
+                        `<span class="dependency-badge">${escapeHtml(
+
+                          dep
+
+                        )}</span>`
+
+                    )
+
+                    .join("")}
+
+                </div>
+
+              </div>`
+
+              : "";
+
+          const resultHtml =
+
+            subtask.resultSummary && String(subtask.resultSummary).length
+
+              ? `<div class="subtask-result">
+
+                <div><strong>Result:</strong></div>
+
+                <div class="result-content">${escapeHtml(
+                  formatResultSummary(subtask.resultSummary)
+
+                )}</div>
+
+              </div>`
+
+              : "";
+
+          grid.innerHTML += `
+
+            <div class="subtask-card" data-task-id="${escapeHtml(subtaskId)}">
+
+              <div class="subtask-id">Task ${escapeHtml(subtaskId)}</div>
+
+              <div class="${statusClassName}">${escapeHtml(
+                getStatusBadge(subtask.status || "created")
+              )}</div>
+
+              <div class="subtask-worker">
+
+                <div><strong>Agent:</strong> ${
+
+                  escapeHtml(formatWorkerRole(subtask.workerRole)) ||
+
+                  escapeHtml(subtask.workerId) ||
+
+                  "待分配"
+
+                }</div>
+
+              </div>
+
+              <div class="description-content">${escapeHtml(
+
+                subtask.description || "暂无描述"
+
+              )}</div>
+
+              ${depHtml}
+
+              ${resultHtml}
+
+            </div>
+
+          `;
+
+        });
+
+      }
+
+      function renderFeed() {
+
+        const feed = document.getElementById("liveFeed");
+
+        const latest = store.events.slice(-25).reverse();
+
+        feed.innerHTML = latest
+
+          .map((event) => {
+
+            const title = event.event_type || "event";
+
+            const detail = formatFeedDetail(event);
+
+            const time = event.timestamp ? `@ ${event.timestamp}` : "";
+
+            return `
+
+              <div class="feed-card">
+
+                <div class="feed-title">${escapeHtml(title)} ${escapeHtml(
+
+              time
+
+            )}</div>
+
+                <div class="feed-body">${escapeHtml(detail)}</div>
+
+              </div>
+
+            `;
+
+          })
+
+          .join("");
+
+      }
+
+      function handleEvent(event) {
+
+        if (event.source_file && store.seenFiles.has(event.source_file)) {
+
+          return;
+
+        }
+
+        if (event.source_file) store.seenFiles.add(event.source_file);
+
+        store.events.push(event);
+
+        if (event.event_type === "worker_created" && event.worker_id) {
+
+          store.workerRoles[event.worker_id] =
+
+            event.role || event.worker_role || "";
+
+        }
+
+        if (event.event_type === "task_created") {
+
+          updateTask(event.task_id, {
+
+            description: event.description || "",
+
+            status: "created",
+
+            timestamp: event.timestamp || "",
+
+            parent_task_id: event.parent_task_id || null,
+
+          });
+
+        }
+
+        if (event.event_type === "task_decomposed") {
+
+          updateTask(event.parent_task_id || "0", {
+
+            status: "decomposed",
+
+            subtasks: (event.subtask_ids || []).map(String),
+
+          });
+
+        }
+
+        if (event.event_type === "task_assigned") {
+
+          updateTask(event.task_id, {
+
+            status: "assigned",
+
+            workerId: event.worker_id || "",
+
+            workerRole:
+
+              event.worker_role || store.workerRoles[event.worker_id] || "",
+
+            dependencies: normalizeDeps(event.dependencies),
+
+            timestamp: event.timestamp || "",
+
+          });
+
+        }
+
+        if (event.event_type === "task_started") {
+
+          updateTask(event.task_id, {
+
+            status: "started",
+
+            workerId: event.worker_id || "",
+
+            workerRole:
+
+              event.worker_role || store.workerRoles[event.worker_id] || "",
+
+            timestamp: event.timestamp || "",
+
+          });
+
+        }
+
+        if (event.event_type === "task_completed") {
+
+          updateTask(event.task_id, {
+
+            status: "completed",
+
+            workerId: event.worker_id || "",
+
+            workerRole:
+
+              event.worker_role || store.workerRoles[event.worker_id] || "",
+
+            resultSummary: event.result_summary || "",
+
+            timestamp: event.timestamp || "",
+
+          });
+
+        }
+
+        if (event.event_type === "ori_task") {
+
+          store.oriTask = event.description || event.content || "";
+
+        }
+
+        renderFancyTask();
+
+        renderOriTask();
+
+
+        renderSubtasks();
+
+        renderFeed();
+
+      }
+
+      async function bootstrap() {
+
+        const runResp = await fetch("/api/runs");
+
+        const runData = await runResp.json();
+
+        await loadRun(runData.latest);
+
+        setInterval(async () => {
+
+          const latestResp = await fetch("/api/runs/latest");
+
+          const latestData = await latestResp.json();
+
+          if (latestData.latest && latestData.latest !== store.runId) {
+            await loadRun(latestData.latest);
+          }
+
+        }, 5000);
+
+      }
+
+      let stream = null;
+
+      function resetStore() {
+        store.tasks = {};
+        store.workerRoles = {};
+        store.events = [];
+        store.seenFiles = new Set();
+        store.oriTask = "";
+      }
+
+      async function loadRun(runId) {
+
+        if (stream) {
+          stream.close();
+          stream = null;
+        }
+
+        resetStore();
+
+        store.runId = runId;
+
+        document.getElementById("runLabel").textContent = store.runId
+
+          ? `Run: ${store.runId}`
+
+          : "No runs yet";
+
+        if (!store.runId) return;
+
+        const eventsResp = await fetch(`/api/events?run=${store.runId}`);
+
+        const eventsData = await eventsResp.json();
+
+        (eventsData.events || []).forEach(handleEvent);
+
+        stream = new EventSource(`/api/stream?run=${store.runId}`);
+
+        stream.addEventListener("workforce", (msg) => {
+
+          const data = JSON.parse(msg.data);
+
+          handleEvent(data);
+
+        });
+
+        stream.onerror = () => {
+
+          stream.close();
+
+          stream = null;
+
+          setInterval(async () => {
+
+            if (!store.runId) return;
+
+            const resp = await fetch(`/api/events?run=${store.runId}`);
+
+            const data = await resp.json();
+
+            (data.events || []).forEach(handleEvent);
+
+          }, 3000);
+
+        };
+
+      }
+
+      bootstrap();
+
+    </script>
+
+  </body>
+
+</html>

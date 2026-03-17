@@ -1,93 +1,222 @@
-# aios_soul
+# AIOS Workforce 实时可视化仪表板
+
+## 功能特性
+
+- **实时任务展示** - WebSocket实时推送任务更新
+- **状态颜色区分** - 任务状态可视化
+  - 灰色：已创建 (created)
+  - 蓝色：已分配 (assigned)
+  - 黄色：进行中 (started)
+  - 绿色：已完成 (completed)
+- **依赖关系可视化** - 虚线箭头显示任务间的依赖关系
+- **Agent信息展示** - 显示执行Agent
+- **执行结果** - 实时显示任务执行结果
+
+## 在aios_demo.py中，需要添加的代码
+- 添加的部分 part.1 , 在test_monitor.py的 " 28-139 " 行
+- 添加的部分 part.2 , 在test_monitor.py的 " 211-212 " 行
+
+## 安装依赖 (在原有虚拟环境的基础上，添加flask所需的依赖)
+```bash
+cd demo
+pip install -r requirements.txt
+```
+```bash
+ ┌───────────────────────────┐
+ │   dashboard need:         │
+ │  Flask==2.3.3             │
+ │  flask-socketio==5.3.4    │
+ │  python-socketio==5.9.0   │
+ │  python-engineio==4.7.1   │
+ └───────────────────────────┘
+```
+
+## 快速开始
+### 在第 1 个终端
+```bash
+cd demo
+python event_api.py
+```
+### 在第 2 个终端:
+```bash
+python -m demo.test_monitor.py
+```
+### 打开 浏览器 访问：
+```
+http://127.0.0.1:5000
+```
+
+## 项目结构
+```
+├── demo/
+│   ├── __init__.py
+|   |
+│   ├── monitor/
+│   │   ├── __init__.py
+│   │   ├── static\ 
+│   │   |   ├── logo.png 
+│   │   ├── templates\
+│   │   |   ├── dashboard.html
+│   │   ├── event_api.py 
+│   │   ├── requirements.txt 
+│   │   ├── run_dashboard.sh
+│   │   └── run_event_artifacts.py
+|   |
+│   └── dashboard_test.py
+```
 
 
 
-## Getting started
+## 工作原理
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+1. **事件收集** - `test_workforce_events.py`执行任务时，将事件写入`working_dir/[时间戳]/`目录下的`.txt`文件
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+2. **事件监控** - `event_api.py`的后台线程持续扫描新事件文件
 
-## Add your files
+3. **事件解析** - 解析`.txt`文件内容，提取任务信息（ID、状态、依赖关系等）
 
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/ee/gitlab-basics/add-file.html#add-a-file-using-the-command-line) or push an existing Git repository with the following command:
+4. **实时推送** - 通过WebSocket将事件实时推送到前端
+
+5. **界面更新** - 前端接收事件后，动画展示任务的分解和执行过程
+
+## 事件类型
+
+### task_created
+主任务创建事件
 
 ```
-cd existing_repo
-git remote add origin http://gitlab.miaohan.xyz/huawei/aios_soul.git
-git branch -M main
-git push -uf origin main
+timestamp: 2026-02-27T06:11:21.062912+00:00
+workforce_id: 2201323553456
+event_type: task_created
+task_id: 0
+description: 我最近去了云南旅游了，你帮我看看我相册、备忘录里面的一些东西，整理一下去小红书发个帖子
 ```
 
-## Integrate with your tools
+### task_decomposed
+任务分解事件 - 主任务分解为若干子任务
 
-- [ ] [Set up project integrations](http://gitlab.miaohan.xyz/huawei/aios_soul/-/settings/integrations)
+```
+timestamp: 2026-02-27T06:11:53.312517+00:00
+workforce_id: 2201323553456
+event_type: task_decomposed
+parent_task_id: 0
+subtask_ids: ['0.1', '0.2', '0.3', '0.4']
+```
 
-## Collaborate with your team
+### task_assigned
+子任务分配事件 - 分配给特定Agent
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/ee/user/project/merge_requests/merge_when_pipeline_succeeds.html)
+```
+timestamp: 2026-02-27T06:12:11.983026+00:00
+event_type: task_assigned
+task_id: 0.1
+worker_id: 1c0fa642-b278-4f11-8bd5-0155755905c1
+worker_role: Photos Agent: ...
+dependencies: []
+```
 
-## Test and Deploy
+### task_started
+任务开始执行
 
-Use the built-in continuous integration in GitLab.
+```
+event_type: task_started
+task_id: 0.1
+timestamp: ...
+```
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/index.html)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+### task_completed
+任务完成执行
 
-***
+```
+event_type: task_completed
+task_id: 0.1
+result: {}
+timestamp: ...
+```
 
-# Editing this README
+## API接口
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+### GET /
+返回仪表板HTML页面
 
-## Suggestions for a good README
+### GET /api/tasks
+获取所有任务信息
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+**返回示例：**
+```json
+{
+  "0": {
+    "id": "0",
+    "description": "主任务描述",
+    "status": "decomposed",
+    "subtasks": ["0.1", "0.2"],
+    "timestamp": "2026-02-27T06:11:21.062912+00:00"
+  },
+  "0.1": {
+    "id": "0.1",
+    "status": "completed",
+    "worker_id": "...",
+    "dependencies": [],
+    "result": "执行结果"
+  }
+}
+```
 
-## Name
-Choose a self-explaining name for your project.
+### GET /api/events
+获取所有原始事件
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+## WebSocket事件
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+客户端连接时接收：
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+- `initial_data` - 初始化数据（所有已有任务）
+- `task_created` - 新任务创建
+- `task_decomposed` - 任务分解完成
+- `task_assigned` - 任务分配完成
+- `task_started` - 任务开始执行
+- `task_completed` - 任务执行完成
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+## 故障排除
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+### 端口已被占用
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+如果5000端口已被占用，编辑`event_api.py`最后一行：
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+```python
+socketio.run(app, host='127.0.0.1', port=5001, debug=False)  # 改为其他端口
+```
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+### 无法连接WebSocket
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+确保：
+1. API服务正确启动（无错误日志）
+2. 防火墙未阻止5000端口
+3. 浏览器支持WebSocket
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+### 任务事件未显示
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+检查：
+1. `working_dir/`目录是否存在
+2. 事件文件是否被正确生成（`.txt`文件）
+3. API日志中是否有parsing错误
 
-## License
-For open source projects, say how it is licensed.
+## 自定义配置
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+### 修改工作目录
+
+在`event_api.py`中修改：
+```python
+WORKING_DIRECTORY = "/your/custom/path"
+```
+
+### 修改端口
+
+在`event_api.py`中修改：
+```python
+socketio.run(app, host='127.0.0.1', port=8080, debug=False)
+```
+
+### 修改样式
+
+编辑`templates/dashboard.html`中的`<style>`部分
+
