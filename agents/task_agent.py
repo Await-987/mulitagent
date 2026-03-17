@@ -102,6 +102,12 @@ def task_agent_factory():
       prepared outputs, not unrestricted access to raw upstream data.
     - **Privacy-aware planning**: Prefer plans that reduce unnecessary data visibility
       while still satisfying the task objective.
+    - **File content is opaque to non-Document agents**: Files written by Document
+      Agent can only be read by Document Agent. Never plan a step where Document Agent
+      writes intermediate content to a file and a different app agent reads it. If any
+      app agent needs content to publish or send, that content must be embedded
+      directly in its subtask instruction — the agent generates and submits in one
+      step without going through a file.
     </capability_and_data_flow_policy>
     """
 

@@ -55,5 +55,5 @@ def test_d2d_reply():
 if __name__ == "__main__":
     # test_query_contact_info()
     # test_query_call_log()
-    test_d2d_ask()
+    # test_d2d_ask()
     test_d2d_reply()

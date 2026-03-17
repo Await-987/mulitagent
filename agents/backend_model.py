@@ -34,7 +34,7 @@ def backend_model():
 
     return ModelFactory.create(
         model_platform=ModelPlatformType.OPENAI,
-        model_type=ModelType.GPT_5_NANO,
+        model_type="qwen3.5-plus",
         api_key=api_key,
         url=url
     )

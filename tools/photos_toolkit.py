@@ -28,8 +28,8 @@ class PhotosToolkit(BaseToolkit):
         Consults the AIOS Photos app for personalization insights relevant to the task.
 
         The Photos app manages all photos on the user's device and supports: semantic
-        photo search and detailed visual content analysis. This tool provides advisory
-        personalization input (e.g. shooting habits, visual preferences, photo style
+        photo search and detailed visual content analysis. But Photos app does not support modify photos.
+        This tool provides advisory personalization input (e.g. shooting habits, visual preferences, photo style
         tendencies) — it does not return raw photo files or perform any operations.
 
         Args:

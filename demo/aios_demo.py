@@ -52,7 +52,7 @@ async def main():
         share_memory=False,
         coordinator_agent=coordinator_agent,
         task_agent=task_agent,
-        use_structured_output_handler=False,
+        use_structured_output_handler=True,
         task_timeout_seconds=900.0,
     )
 
@@ -123,12 +123,15 @@ async def main():
     workforce.dump_workforce_logs(log_file_path)
     print(f"\nWorkforce logs saved to: {log_file_path}")
 
+    soul_agent.reset()
+
     soul_result = soul_agent.step(
         "The task has been completed by AIOS. "
         "Please use get_task_status to review the execution record and decide "
         "whether the soul profile needs to be updated based on what happened."
     )
-    print(soul_result.msg.content)
+    print("\n--- Soul Agent: Profile Update ---")
+    print(_get_response_content(soul_result))
 
 
 if __name__ == "__main__":

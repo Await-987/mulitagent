@@ -26,22 +26,24 @@ def main():
 
     pre_result = agent.step(original_task)
     print("Soul Agent output (enriched task):\n")
-    # print(get_response_content(pre_result))
-    print("msg:", pre_result.msg)
-    print("msgs:", pre_result.msgs)
+    print(get_response_content(pre_result))
 
-    # # --- Phase 2: Post-task profile update ---
-    # print("\n" + "=" * 60)
-    # print("Phase 2: Post-task profile update")
-    # print("=" * 60)
-    #
-    # post_result = agent.step(
-    #     "The task has been completed by AIOS. "
-    #     "Please use get_task_status to review the execution record and decide "
-    #     "whether the soul profile needs to be updated based on what happened."
-    # )
-    # print("Soul Agent output (profile update decision):\n")
-    # print(get_response_content(post_result))
+    agent.reset()
+
+    # --- Phase 2: Post-task profile update ---
+    print("\n" + "=" * 60)
+    print("Phase 2: Post-task profile update")
+    print("=" * 60)
+
+    post_result = agent.step(
+        "The task has been completed by AIOS. "
+        "Please use get_task_status to review the execution record and decide "
+        "whether the soul profile needs to be updated based on what happened."
+    )
+    print("Soul Agent output (profile update decision):\n")
+    print(get_response_content(post_result))
+    # print("msg:", post_result.msg)
+    # print("msgs:", post_result.msgs)
 
 
 if __name__ == "__main__":

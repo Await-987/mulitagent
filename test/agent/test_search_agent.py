@@ -8,7 +8,7 @@ async def main():
 
     # Test queries
     test_queries = [
-        "哈梅内伊怎么样了？"
+        "什么是Openclaw？"
     ]
 
     for query in test_queries:

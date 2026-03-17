@@ -82,6 +82,10 @@ def coordinator_agent_factory():
       app-specific write capabilities confined to their own storage only.
     - Do NOT assign file creation or document generation tasks to any agent other than
       Document Agent.
+    - Files created by Document Agent are accessible ONLY to Document Agent. If a
+      downstream app agent needs generated content, pass that content inline in the
+      subtask instruction — never as a file path reference. Do not delegate a task
+      that requires reading a file to any agent that lacks file-reading capability.
     </file_write_policy>
     """
 

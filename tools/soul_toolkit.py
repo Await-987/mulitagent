@@ -42,8 +42,10 @@ class SoulToolkit(BaseToolkit):
         update the user's soul profile based on what happened.
         """
         if not self.task_status_path.exists():
+            print(f"task_status.md not found at: {self.task_status_path}")
             return f"task_status.md not found at: {self.task_status_path}"
         with open(self.task_status_path, encoding="utf-8") as f:
+            print(f"task_status.md found at: {self.task_status_path}")
             return f.read()
 
     def update_soul_profile(self, key: str, value: str) -> str:
