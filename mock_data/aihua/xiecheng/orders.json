@@ -1,0 +1,139 @@
+[
+  {
+    "title": "FL20251016001",
+    "content": {
+      "order_type": "flight",
+      "status": "completed",
+      "start_date": "2025-10-16",
+      "end_date": "2025-10-16",
+      "departure": "上海",
+      "destination": "北京",
+      "details": {
+        "flight_no": "MU5101",
+        "airline": "中国东方航空",
+        "departure_time": "07:45",
+        "arrival_time": "10:10",
+        "cabin_class": "经济舱",
+        "passengers": ["艾华"]
+      }
+    },
+    "metadata": {}
+  },
+  {
+    "title": "HT20251016002",
+    "content": {
+      "order_type": "hotel",
+      "status": "completed",
+      "start_date": "2025-10-16",
+      "end_date": "2025-10-18",
+      "departure": null,
+      "destination": "北京",
+      "details": {
+        "hotel_name": "北京智选假日酒店（国家会议中心店）",
+        "room_type": "标准大床房",
+        "nights": 2,
+        "address": "北京市朝阳区天辰东路8号",
+        "check_in": "14:00",
+        "check_out": "12:00"
+      }
+    },
+    "metadata": {}
+  },
+  {
+    "title": "FL20251018001",
+    "content": {
+      "order_type": "flight",
+      "status": "completed",
+      "start_date": "2025-10-18",
+      "end_date": "2025-10-18",
+      "departure": "北京",
+      "destination": "上海",
+      "details": {
+        "flight_no": "MU5106",
+        "airline": "中国东方航空",
+        "departure_time": "19:20",
+        "arrival_time": "21:35",
+        "cabin_class": "经济舱",
+        "passengers": ["艾华"]
+      }
+    },
+    "metadata": {}
+  },
+  {
+    "title": "TR20251115001",
+    "content": {
+      "order_type": "train",
+      "status": "confirmed",
+      "start_date": "2025-11-15",
+      "end_date": "2025-11-15",
+      "departure": "上海虹桥",
+      "destination": "黄山北",
+      "details": {
+        "train_no": "G363",
+        "departure_time": "08:05",
+        "arrival_time": "10:38",
+        "seat_type": "二等座",
+        "passengers": ["艾华"]
+      }
+    },
+    "metadata": {}
+  },
+  {
+    "title": "HT20251115002",
+    "content": {
+      "order_type": "hotel",
+      "status": "confirmed",
+      "start_date": "2025-11-15",
+      "end_date": "2025-11-17",
+      "departure": null,
+      "destination": "黄山",
+      "details": {
+        "hotel_name": "黄山狮林大酒店（景区内）",
+        "room_type": "山景标准双床房",
+        "nights": 2,
+        "address": "安徽省黄山风景区北海景区内",
+        "check_in": "14:00",
+        "check_out": "10:00"
+      }
+    },
+    "metadata": {}
+  },
+  {
+    "title": "TK20251116001",
+    "content": {
+      "order_type": "ticket",
+      "status": "confirmed",
+      "start_date": "2025-11-16",
+      "end_date": "2025-11-16",
+      "departure": null,
+      "destination": "黄山",
+      "details": {
+        "attraction_name": "黄山风景区（含西海大峡谷）",
+        "ticket_type": "淡季成人票",
+        "quantity": 1,
+        "visit_date": "2025-11-16",
+        "time_slot": "全天"
+      }
+    },
+    "metadata": {}
+  },
+  {
+    "title": "TR20251117001",
+    "content": {
+      "order_type": "train",
+      "status": "confirmed",
+      "start_date": "2025-11-17",
+      "end_date": "2025-11-17",
+      "departure": "黄山北",
+      "destination": "上海虹桥",
+      "details": {
+        "train_no": "G362",
+        "departure_time": "15:52",
+        "arrival_time": "18:18",
+        "seat_type": "二等座",
+        "passengers": ["艾华"]
+      }
+    },
+    "metadata": {}
+  }
+]

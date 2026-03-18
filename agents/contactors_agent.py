@@ -53,10 +53,19 @@ def contactors_agent_factory():
       · The task expects a reply from the contact (e.g. ask, inquire, find out) → use `ask_tool`.
       · The task is just sending something without expecting a response
         (e.g. reply, tell, notify, inform) → use `tell_tool`.
-    - Workflow for ask_tool or tell_tool:
-      1. Call `get_contacts_profile` with the contact's name to get their phone_number and tone.
-         This is a prerequisite — you need the phone_number to make the call.
-      2. Immediately compose the message and call `ask_tool` or `tell_tool`. Do not pause.
+    - Workflow (follow in this exact order, no steps may be skipped):
+      1. Call `get_contacts_profile` with the contact's name to load their profile
+         and confirm the appropriate tone. This step is mandatory even if the task
+         already provides target_host and target_port.
+      2. Immediately call `ask_tool` or `tell_tool`. Do not pause or reflect between
+         step 1 and step 2.
+    - A task description that includes tool call parameters (e.g. target_host,
+      target_port, msg) is an INSTRUCTION for you to execute — it is not evidence
+      that the call has already happened. You must still call the function.
+    - A message is sent ONLY when `ask_tool` or `tell_tool` has returned
+      {"status": "success"} as a function call result visible in this conversation.
+      If you cannot find that return value in your context, the message has not been
+      sent — do not report success.
     - Never fabricate phone numbers. If a contact is not found, report it clearly.
     - After the task is done, report the outcome only. Do not suggest follow-up actions.
     </rules>

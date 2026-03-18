@@ -129,6 +129,18 @@ class ContactorsToolkit(BaseToolkit):
         return result
 
     async def _ask_async(self, target_host: str, target_port: int, msg: str) -> dict:
+        # Windows Proactor raises ConnectionResetError in _call_connection_lost when
+        # the remote side closes first. Suppress it with a temporary exception handler.
+        loop = asyncio.get_running_loop()
+        old_handler = loop.get_exception_handler()
+
+        def _suppress_connection_reset(loop, context):
+            if isinstance(context.get("exception"), ConnectionResetError):
+                return
+            (old_handler or loop.default_exception_handler)(loop, context)
+
+        loop.set_exception_handler(_suppress_connection_reset)
+
         reply_future: asyncio.Future = asyncio.Future()
 
         async def _collect_reply(reader, writer):
@@ -172,12 +184,15 @@ class ContactorsToolkit(BaseToolkit):
         writer.write(b"\nEND\n")
         await writer.drain()
 
-        result = await asyncio.wait_for(reply_future, timeout=400)
-        writer.close()
-        await writer.wait_closed()
-        reply_server.close()
-        await reply_server.wait_closed()
-        return result
+        try:
+            result = await asyncio.wait_for(reply_future, timeout=400)
+            writer.close()
+            await writer.wait_closed()
+            reply_server.close()
+            await reply_server.wait_closed()
+            return result
+        finally:
+            loop.set_exception_handler(old_handler)
 
     def tell_tool(
         self,

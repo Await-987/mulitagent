@@ -33,7 +33,7 @@ def _get_response_content(result) -> str:
     return ""
 
 
-async def main():
+async def main(task: str = ""):
     os.makedirs(WORKING_DIRECTORY, exist_ok=True)
     soul_agent = soul_agent_factory()
     coordinator_agent = coordinator_agent_factory()
@@ -66,7 +66,8 @@ async def main():
         "Contactors Agent: Integrated within the AIOS Contacts app. Looks up contact "
         "profiles (phone numbers, relationship background, recommended communication "
         "tone) via get_contacts_profile, retrieves full message history via "
-        "get_message_history, and sends D2D messages to other AIOS users via ask_tool.",
+        "get_message_history, sends D2D inquiries that await a reply via ask_tool, "
+        "and sends one-way D2D replies or notifications via tell_tool.",
         worker=contactors_agent,
     ).add_single_agent_worker(
         "Notes Agent: Integrated within the AIOS Notes app. Retrieves the user's "
@@ -99,7 +100,7 @@ async def main():
         worker=xiecheng_agent,
     )
 
-    original_task = "我去云南玩了，帮我看看相册有没有自拍照，然后去携程看看有没有对应的旅游攻略，写个帖子帮我发到我的小红书上面去。"
+    original_task = task
     print("AIOS received task:", original_task)
     soul_response = soul_agent.step(original_task)
     enriched_task_content = _get_response_content(soul_response)
@@ -135,4 +136,6 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # _task = "我去云南玩了，帮我看看相册有没有自拍照，然后去携程看看有没有对应的旅游攻略，写个帖子帮我发到我的小红书上面去。"
+    _task = "帮我问问艾华老师，下午几点开会来着"
+    asyncio.run(main(_task))
