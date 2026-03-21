@@ -64,7 +64,7 @@ class XiaoHongShuToolkit(BaseToolkit):
         print(f"  Images : {image_paths}")
         confirm = input("Publish this post? (yes / no): ").strip().lower()
         if confirm not in ("yes", "y"):
-            return {"status": "cancelled", "message": "User declined to publish the post."}
+            return {"status": "cancelled", "message": f"User declined to send the message and said: {confirm}"}
 
         logger.info(f"Publishing Xiaohongshu Post...")
         post = {

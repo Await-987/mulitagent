@@ -106,7 +106,7 @@ class ContactorsToolkit(BaseToolkit):
         print(f"\nContactors app wants to ask the phone number {target_host}:{target_port} with question of <{msg}>.")
         confirm = input("Send this message? (yes / no): ").strip().lower()
         if confirm not in ("yes", "y"):
-            return {"status": "cancelled", "message": "User declined to send the message."}
+            return {"status": "cancelled", "message": f"User declined to send the message and said: {confirm}"}
 
         try:
             asyncio.get_running_loop()
@@ -228,7 +228,7 @@ class ContactorsToolkit(BaseToolkit):
         print(f"\nContactors app wants to send a one-way message to {target_host}:{target_port}: <{msg}>.")
         confirm = input("Send this message? (yes / no): ").strip().lower()
         if confirm not in ("yes", "y"):
-            return {"status": "cancelled", "message": "User declined to send the message."}
+            return {"status": "cancelled", "message": f"User declined to send the message and said: {confirm}"}
 
         try:
             asyncio.get_running_loop()

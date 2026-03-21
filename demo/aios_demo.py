@@ -15,12 +15,9 @@ from agents import (
     xiaohongshu_agent_factory,
     xiecheng_agent_factory,
 )
-
+from demo.monitor.run_event_artifacts import RunEventArtifacts
+from demo import WORKING_DIRECTORY
 logger = get_logger(__name__)
-
-WORKING_DIRECTORY = os.environ.get("CAMEL_WORKDIR") or os.path.abspath(
-    "working_dir/"
-)
 
 
 def _get_response_content(result) -> str:
@@ -35,6 +32,8 @@ def _get_response_content(result) -> str:
 
 async def main(task: str = ""):
     os.makedirs(WORKING_DIRECTORY, exist_ok=True)
+    run_artifacts = RunEventArtifacts(WORKING_DIRECTORY)
+    run_artifacts.prepare_run_output_dir()
     soul_agent = soul_agent_factory()
     coordinator_agent = coordinator_agent_factory()
     task_agent = task_agent_factory()
@@ -100,7 +99,13 @@ async def main(task: str = ""):
         worker=xiecheng_agent,
     )
 
+
     original_task = task
+    run_artifacts.attach_event_file_writer(workforce.metrics_logger)
+    run_artifacts.attach_agent_message_event_bridge(workforce.metrics_logger)
+    run_artifacts.log_original_task(workforce.metrics_logger, original_task)
+
+
     print("AIOS received task:", original_task)
     soul_response = soul_agent.step(original_task)
     enriched_task_content = _get_response_content(soul_response)
@@ -110,7 +115,11 @@ async def main(task: str = ""):
     print("AIOS is building the plan:\n", enriched_task_content)
 
     human_task = Task(content=enriched_task_content, id='0')
-    await workforce.process_task_async(human_task)
+    completed_task = await workforce.process_task_async(human_task)
+
+    print("\n--- Task Execution Result ---")
+    print(f"Status: {completed_task.state}")
+    print(f"Result: {completed_task.result or '(no result)'}")
 
     print("\n--- Workforce Log Tree ---")
     print(workforce.get_workforce_log_tree())
@@ -136,6 +145,7 @@ async def main(task: str = ""):
 
 
 if __name__ == "__main__":
+    _task = "帮我看看我昨天给宽带师傅打电话的时候，师傅怎么解决宽带问题的来着？"
     # _task = "我去云南玩了，帮我看看相册有没有自拍照，然后去携程看看有没有对应的旅游攻略，写个帖子帮我发到我的小红书上面去。"
-    _task = "帮我问问艾华老师，下午几点开会来着"
+    # _task = "帮我问问艾华老师，下午几点开会来着"
     asyncio.run(main(_task))

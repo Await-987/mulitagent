@@ -93,7 +93,7 @@ class SoulToolkit(BaseToolkit):
             print(f'  New     : {parsed_value}')
             confirm = input("Confirm this change? (yes/no): ").strip().lower()
             if confirm not in ("yes", "y"):
-                return f'User declined to modify protected field "{key}". soul.json was not updated.'
+                return f'User declined to modify protected field "{key}". soul.json was not updated. The user said {confirm}.'
 
         is_new_key = key not in current_soul
         current_soul[key] = parsed_value
