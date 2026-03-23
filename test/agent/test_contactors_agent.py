@@ -7,7 +7,7 @@ def test_contactors_agent():
     print("=" * 60)
 
     agent = contactors_agent_factory()
-    result = agent.step("家里宽带当初师傅怎么解决的来着？")
+    result = agent.step("刘星的电话号码是多少来着？")
     print(result.msg.content)
 
 

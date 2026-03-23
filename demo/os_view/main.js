@@ -1,0 +1,3570 @@
+'use strict';
+/* ════════════════════════════════════════════════════════════════════
+   ORCA OS View — main.js
+   ════════════════════════════════════════════════════════════════════ */
+
+// ── 1. CONFIG & CONSTANTS ─────────────────────────────────────────
+const CFG = {
+  POLL_NOTIF:  2000,   // ms – notification polling
+  POLL_DATA:   4000,   // ms – data refresh for open apps
+  CACHE_TTL:   3000,   // ms – data cache freshness
+  POLL_ICONS:  5000,   // ms – icon asset refresh
+};
+
+// Avatar colour palette (one per contact)
+const AVATAR_COLORS = [
+  '#FF3B30','#FF9500','#FFCC00','#34C759','#00C7BE',
+  '#007AFF','#5856D6','#AF52DE','#FF2D55','#A2845E',
+];
+
+const HOME_LAYOUT_KEY = 'orca_os_home_layout_v3';
+
+// ── 2. DATA SERVICE ───────────────────────────────────────────────
+class DataService {
+  constructor() {
+    this._cache = new Map();   // endpoint → data
+    this._ts    = new Map();   // endpoint → timestamp
+  }
+
+  async get(ep, force = false) {
+    const now = Date.now();
+    if (!force && this._cache.has(ep) && (now - this._ts.get(ep) < CFG.CACHE_TTL)) {
+      return this._cache.get(ep);
+    }
+    try {
+      const r = await fetch('/api/' + ep);
+      if (!r.ok) throw new Error(r.status);
+      const data = await r.json();
+      this._cache.set(ep, data);
+      this._ts.set(ep, now);
+      return data;
+    } catch (e) {
+      console.warn('[DS] fetch error:', ep, e.message);
+      return this._cache.get(ep) ?? null;
+    }
+  }
+
+  async post(ep, body) {
+    try {
+      const r = await fetch('/api/' + ep, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await r.json();
+      this._cache.delete(ep);
+      this._ts.delete(ep);
+      return data;
+    } catch (e) {
+      console.warn('[DS] post error:', ep, e.message);
+      return null;
+    }
+  }
+}
+
+// ── 3. UTILITIES ──────────────────────────────────────────────────
+const $ = (sel, ctx = document) => ctx.querySelector(sel);
+const $$ = (sel, ctx = document) => [...ctx.querySelectorAll(sel)];
+
+function el(tag, cls, html) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (html !== undefined) e.innerHTML = html;
+  return e;
+}
+
+function clamp(v, min, max) {
+  return Math.min(max, Math.max(min, v));
+}
+
+function escapeHTML(text = '') {
+  return String(text)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function fmtDate(iso) {
+  const d = new Date(iso);
+  const now = new Date();
+  const diff = now - d;
+  if (diff < 86400000) {
+    return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+  }
+  if (diff < 604800000) {
+    const days = ['日','一','二','三','四','五','六'];
+    return '周' + days[d.getDay()];
+  }
+  return `${d.getMonth()+1}/${d.getDate()}`;
+}
+
+function avatarColor(name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xffffffff;
+  return AVATAR_COLORS[Math.abs(h) % AVATAR_COLORS.length];
+}
+
+function avatarLetter(name) { return name ? name[0] : '?'; }
+
+function parseConversation(text, contactName) {
+  const msgs = [];
+  for (const line of text.split('\n')) {
+    const t = line.trim();
+    if (!t) continue;
+    const colon = t.indexOf(':');
+    if (colon < 0) { msgs.push({ isUser: false, speaker: '?', text: t }); continue; }
+    const spk = t.slice(0, colon).trim();
+    const txt = t.slice(colon + 1).trim();
+    msgs.push({ isUser: spk === '用户', speaker: spk, text: txt });
+  }
+  return msgs;
+}
+
+function docIcon(name) {
+  const ext = name.split('.').pop().toLowerCase();
+  const map = { pdf:'📄', txt:'📃', md:'📝', json:'📋', py:'🐍',
+                js:'📜', ts:'📜', xlsx:'📊', xls:'📊', docx:'📝',
+                doc:'📝', png:'🖼️', jpg:'🖼️', jpeg:'🖼️', mp4:'🎬',
+                mp3:'🎵', zip:'📦', rar:'📦' };
+  return map[ext] || '📁';
+}
+
+function formatBytes(b) {
+  if (!b) return '';
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+  return (b/1048576).toFixed(1) + ' MB';
+}
+
+function sameDay(a, b) {
+  return a && b
+    && a.getFullYear() === b.getFullYear()
+    && a.getMonth() === b.getMonth()
+    && a.getDate() === b.getDate();
+}
+
+function sameMonth(a, b) {
+  return a && b
+    && a.getFullYear() === b.getFullYear()
+    && a.getMonth() === b.getMonth();
+}
+
+function monthTitle(date) {
+  return date.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long' });
+}
+
+function dateKey(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function parseDateOnly(iso) {
+  if (!iso) return null;
+  const d = new Date(`${iso}T00:00:00`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function formatFullDate(dateLike) {
+  const date = dateLike instanceof Date ? dateLike : new Date(dateLike);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleDateString('zh-CN', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    weekday: 'short',
+  });
+}
+
+function renderAppIconContent(app, className = 'app-icon-media') {
+  if (app.iconUrl) {
+    return `<img class="${className}" src="${app.iconUrl}" alt="${escapeHTML(app.name)}" />`;
+  }
+  return `<span class="${className} app-icon-glyph">${app.icon}</span>`;
+}
+
+function previewNodeFromHTML(html) {
+  if (!html) return null;
+  const tpl = document.createElement('template');
+  tpl.innerHTML = html.trim();
+  const node = tpl.content.firstElementChild;
+  if (!node) return null;
+  node.querySelectorAll('[id]').forEach((item) => item.removeAttribute('id'));
+  node.querySelectorAll('input, textarea, button, a, select').forEach((item) => {
+    item.setAttribute('tabindex', '-1');
+    item.setAttribute('disabled', 'disabled');
+  });
+  return node;
+}
+
+// ── 4. NOTIFICATION MANAGER ───────────────────────────────────────
+class NotificationManager {
+  constructor(os) { this.os = os; }
+
+  show({ id, app, title, message }) {
+    const icons = { search:'🔍', contacts:'📞', documents:'📁', photos:'📸',
+                    xiaohongshu:'🌹', notes:'📝', xiecheng:'✈️', calendar:'📅',
+                    settings:'⚙️', system:'🔔' };
+    const icon = icons[app] || icons.system;
+
+    const card = el('div', 'notif-card');
+    card.innerHTML = `
+      <span class="notif-icon">${icon}</span>
+      <div class="notif-body">
+        <div class="notif-title">${title}</div>
+        <div class="notif-msg">${message}</div>
+      </div>`;
+
+    const layer = $('#notif-layer');
+    layer.appendChild(card);
+
+    let timer = setTimeout(() => this._dismiss(card), 4000);
+    card.addEventListener('mouseenter', () => clearTimeout(timer));
+    card.addEventListener('mouseleave', () => { timer = setTimeout(() => this._dismiss(card), 2000); });
+    card.addEventListener('click', () => this._dismiss(card));
+  }
+
+  _dismiss(card) {
+    card.classList.add('dismissing');
+    card.addEventListener('animationend', () => card.remove(), { once: true });
+  }
+}
+
+// ── 5. APP SWITCHER ───────────────────────────────────────────────
+class AppSwitcher {
+  constructor(os) {
+    this.os      = os;
+    this.el      = $('#app-switcher');
+    this.cardsEl = $('#switcher-cards');
+    this._raf    = 0;
+
+    // Tap / touch the backdrop (outside any card) → go home
+    this.el.addEventListener('mousedown', (e) => {
+      if (e.target === this.el) this.os.goHome();
+    });
+    this.el.addEventListener('touchend', (e) => {
+      if (e.target === this.el) this.os.goHome();
+    }, { passive: true });
+
+    this.cardsEl?.addEventListener('mousedown', (e) => e.stopPropagation());
+    this.cardsEl?.addEventListener('scroll', () => this._scheduleDepth());
+    window.addEventListener('resize', () => this._scheduleDepth());
+    this._bindScrollerDrag();
+  }
+
+  show(stack) {
+    const apps = stack.map(id => this.os.getApp(id)).filter(Boolean);
+    this.cardsEl.innerHTML = '';
+
+    for (const app of apps) {
+      const card = el('div', 'switcher-card');
+      const preview = el('div', 'switcher-preview');
+      const stage = el('div', 'switcher-preview-stage');
+      const meta = el('div', 'switcher-meta');
+      const previewNode = this.os.buildAppPreviewNode(app);
+
+      preview.innerHTML = `
+        <div class="switcher-swipe-hint"></div>
+        <div class="switcher-preview-sheen"></div>
+      `;
+      if (previewNode) {
+        stage.appendChild(previewNode);
+      } else {
+        stage.innerHTML = `<div class="switcher-preview-fallback">${escapeHTML(app.name)}</div>`;
+      }
+      preview.appendChild(stage);
+      meta.innerHTML = `
+        <div class="switcher-meta-icon" style="background:${app.iconUrl ? 'transparent' : app.iconBg};">${renderAppIconContent(app, 'switcher-preview-icon')}</div>
+        <div class="switcher-meta-copy">
+          <div class="switcher-label">${escapeHTML(app.name)}</div>
+          <div class="switcher-subtitle">最近使用</div>
+        </div>
+      `;
+      card.appendChild(preview);
+      card.appendChild(meta);
+
+      this._bindCard(card, app);
+      this.cardsEl.appendChild(card);
+    }
+
+    if (!apps.length) { this.os.goHome(); return; }
+
+    this.el.classList.remove('hidden');
+    requestAnimationFrame(() => {
+      this.el.classList.add('is-open');
+      this._scheduleDepth();
+    });
+    // center on the most recently used app
+    setTimeout(() => {
+      const lastCard = this.cardsEl.lastElementChild;
+      if (lastCard) lastCard.scrollIntoView({ behavior:'smooth', inline:'center', block:'nearest' });
+      this._scheduleDepth();
+    }, 50);
+  }
+
+  hide() {
+    this.el.classList.remove('is-open');
+    this.el.classList.add('hidden');
+  }
+
+  _scheduleDepth() {
+    cancelAnimationFrame(this._raf);
+    this._raf = requestAnimationFrame(() => this._updateDepth());
+  }
+
+  _updateDepth() {
+    const scroller = this.cardsEl;
+    if (!scroller) return;
+    const scrollerRect = scroller.getBoundingClientRect();
+    const center = scrollerRect.left + scrollerRect.width / 2;
+
+    $$('.switcher-card', scroller).forEach((card) => {
+      if (card.classList.contains('closing')) return;
+      const preview = $('.switcher-preview', card);
+      if (!preview) return;
+
+      const rect = card.getBoundingClientRect();
+      const distance = (rect.left + rect.width / 2 - center) / rect.width;
+      const limited = clamp(distance, -1.35, 1.35);
+      const emphasis = 1 - Math.min(Math.abs(limited), 1) * 0.24;
+      const lift = Math.min(Math.abs(limited), 1) * 18;
+      card.classList.toggle('is-focused', Math.abs(limited) < 0.24);
+      card.style.transform = `translateY(${lift}px)`;
+      preview.style.transform = `rotateY(${limited * -26}deg) scale(${emphasis})`;
+      preview.style.opacity = `${1 - Math.min(Math.abs(limited), 1) * 0.34}`;
+    });
+  }
+
+  _bindCard(card, app) {
+    const preview = $('.switcher-preview', card);
+    let sx = 0, sy = 0, dragging = false, moved = false, mode = '', startScroll = 0;
+
+    // ── shared gesture logic ──────────────────────────────────────
+    const onStart = (clientX, clientY) => {
+      startScroll = this.cardsEl?.scrollLeft || 0;
+      sx = clientX; sy = clientY;
+      dragging = true; moved = false; mode = '';
+      preview.style.transition = 'none';
+    };
+
+    const onMove = (clientX, clientY) => {
+      if (!dragging) return false;
+      const dx = clientX - sx;
+      const dy = clientY - sy;
+      if (!mode && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) {
+        mode = Math.abs(dx) > Math.abs(dy) ? 'scroll' : 'card';
+      }
+      if (mode === 'scroll') {
+        moved = true;
+        if (this.cardsEl) {
+          this.cardsEl.scrollLeft = startScroll - dx;
+          this.cardsEl.classList.add('is-dragging');
+        }
+        preview.style.transform = '';
+        preview.style.opacity = '';
+        this._scheduleDepth();
+        return true; // consumed → caller should preventDefault
+      }
+      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) moved = true;
+      preview.style.transform = `translate(${dx * 0.08}px, ${Math.min(30, dy)}px) scale(${clamp(1 - Math.abs(dy) / 800, 0.9, 1)})`;
+      preview.style.opacity = `${clamp(1 - Math.max(0, -dy) / 220, 0.25, 1)}`;
+      return mode === 'card'; // prevent scroll only when dragging card vertically
+    };
+
+    const onEnd = (clientX, clientY) => {
+      if (!dragging) return;
+      dragging = false;
+      const dx = clientX - sx;
+      const dy = clientY - sy;
+      const shouldClose = mode !== 'scroll' && dy < -110 && Math.abs(dy) > Math.abs(dx);
+      preview.style.transition = '';
+      this.cardsEl?.classList.remove('is-dragging');
+
+      if (mode === 'scroll') {
+        preview.style.transform = '';
+        preview.style.opacity = '';
+        this._scheduleDepth();
+        return;
+      }
+      if (shouldClose) {
+        preview.style.transform = 'translateY(-220px) scale(0.94)';
+        preview.style.opacity = '0';
+        card.classList.add('closing');
+        setTimeout(() => {
+          card.remove();
+          this.os.dismissFromSwitcher(app.id);
+          this._scheduleDepth();
+          if (!this.os.getOpenStack().length) this.os.goHome();
+        }, 220);
+        return;
+      }
+      preview.style.transform = '';
+      preview.style.opacity = '';
+      if (!moved) { this.hide(); this.os.openApp(app.id, null); }
+      this._scheduleDepth();
+    };
+
+    // ── Mouse ─────────────────────────────────────────────────────
+    preview.addEventListener('mousedown', (e) => {
+      onStart(e.clientX, e.clientY);
+      e.preventDefault();
+      const mm = (evt) => { if (onMove(evt.clientX, evt.clientY)) evt.preventDefault(); };
+      const mu = (evt) => { onEnd(evt.clientX, evt.clientY); window.removeEventListener('mousemove', mm); };
+      window.addEventListener('mousemove', mm);
+      window.addEventListener('mouseup', mu, { once: true });
+    });
+
+    // ── Touch ─────────────────────────────────────────────────────
+    preview.addEventListener('touchstart', (e) => {
+      onStart(e.touches[0].clientX, e.touches[0].clientY);
+    }, { passive: true });
+
+    preview.addEventListener('touchmove', (e) => {
+      const consumed = onMove(e.touches[0].clientX, e.touches[0].clientY);
+      if (consumed) e.preventDefault();
+    }, { passive: false });
+
+    preview.addEventListener('touchend', (e) => {
+      onEnd(e.changedTouches[0].clientX, e.changedTouches[0].clientY);
+    }, { passive: true });
+  }
+
+  _bindScrollerDrag() {
+    if (!this.cardsEl) return;
+    const scroller = this.cardsEl;
+    let sx = 0, startScroll = 0, dragging = false, engaged = false, startTarget = null;
+
+    // ── Mouse drag (desktop) ──────────────────────────────────────
+    scroller.addEventListener('mousedown', (e) => {
+      startTarget = e.target;
+      if (e.target.closest('.switcher-preview')) return;
+      sx = e.clientX;
+      startScroll = scroller.scrollLeft;
+      dragging = true;
+      engaged = false;
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      const dx = e.clientX - sx;
+      if (!engaged && Math.abs(dx) > 5) { engaged = true; scroller.classList.add('is-dragging'); }
+      if (!engaged) return;
+      scroller.scrollLeft = startScroll - dx;
+      this._scheduleDepth();
+      e.preventDefault();
+    });
+
+    window.addEventListener('mouseup', () => {
+      if (!dragging) return;
+      const shouldGoHome = !engaged && !startTarget?.closest('.switcher-card');
+      dragging = false; engaged = false;
+      scroller.classList.remove('is-dragging');
+      startTarget = null;
+      if (shouldGoHome) this.os.goHome();
+    });
+
+    // ── Touch (mobile) ────────────────────────────────────────────
+    // Horizontal card scrolling is handled by native touch-scroll
+    // (overflow-x: scroll on scroller). We only need to:
+    //   1. Keep the depth/perspective effect in sync during scroll.
+    //   2. Detect a tap on empty space (no card target) → go home.
+    let touchStartTarget = null;
+    scroller.addEventListener('touchstart', (e) => {
+      touchStartTarget = e.target;
+    }, { passive: true });
+
+    scroller.addEventListener('touchend', (e) => {
+      const wasTap = e.changedTouches[0] &&
+        Math.abs(e.changedTouches[0].clientX - (e.touches[0]?.clientX ?? e.changedTouches[0].clientX)) < 10;
+      if (wasTap && !touchStartTarget?.closest('.switcher-card')) {
+        this.os.goHome();
+      }
+      touchStartTarget = null;
+    }, { passive: true });
+  }
+}
+
+// ── 6. BASE APP ───────────────────────────────────────────────────
+class BaseApp {
+  constructor(os, { id, name, icon, iconBg = '#1c1c1e', headerBg = '#fff' }) {
+    this.os       = os;
+    this.id       = id;
+    this.name     = name;
+    this.icon     = icon;
+    this.iconBg   = iconBg;
+    this.headerBg = headerBg;
+    this.window   = null;  // DOM node – set by ORCAOS
+    this._pollTimer = null;
+  }
+
+  // Subclasses implement these:
+  buildHTML()    { return '<div class="state-loading"><div class="spinner"></div></div>'; }
+  async onOpen() {}
+  onClose()      {}
+
+  push(html) {
+    if (!this.window) return;
+    this.window.innerHTML = html;
+    this._bindBack();
+  }
+
+  _bindBack() {
+    $$('.app-back', this.window).forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const target = btn.dataset.target;
+        if (target) { this._showView(target); }
+        else         { this.os.closeApp(this.id); }
+      });
+    });
+  }
+
+  _showView(viewId) {
+    $$('.app-view', this.window).forEach(v => {
+      v.style.display = v.dataset.view === viewId ? 'flex' : 'none';
+    });
+  }
+
+  startPoll(fn, interval = CFG.POLL_DATA) {
+    this._pollTimer = setInterval(fn, interval);
+  }
+  stopPoll() { clearInterval(this._pollTimer); }
+}
+
+// ── 7. SEARCH APP ─────────────────────────────────────────────────
+class SearchApp extends BaseApp {
+  constructor(os) {
+    super(os, { id:'search', name:'搜索', icon:'🔍', iconBg:'#007AFF', headerBg:'#f2f2f7' });
+  }
+
+  buildHTML() {
+    return `<div class="app-window-inner search-app" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
+      <div id="search-home" style="flex:1;overflow-y:auto;">
+        ${this._heroHTML()}
+      </div>
+      <div id="search-result-panel" style="display:none;flex:1;overflow-y:auto;"></div>
+    </div>`;
+  }
+
+  _heroHTML() {
+    const chips = ['多智能体研究','大模型记忆机制','云南旅游攻略','Python异步编程','CVPR 2025'];
+    return `<div class="search-hero">
+      <div class="search-logo">ORCA</div>
+      <div style="font-size:14px;color:#888;margin-top:-16px;letter-spacing:1px;">Search Agent</div>
+      <div class="search-box">
+        <input id="search-q" type="text" placeholder="搜索…" autocomplete="off" />
+        <button id="search-btn">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+            <circle cx="7.5" cy="7.5" r="5.5" stroke="currentColor" stroke-width="1.8"/>
+            <line x1="11.5" y1="11.5" x2="16" y2="16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+      <div class="search-links">
+        ${chips.map(c=>`<div class="search-chip" data-q="${c}">${c}</div>`).join('')}
+      </div>
+    </div>`;
+  }
+
+  async onOpen() {
+    await this._renderHome();
+  }
+
+  async _renderHome() {
+    const home = $('#search-home', this.window);
+    if (home) home.innerHTML = this._heroHTML();
+    this._bindSearch();
+    const rp = $('#search-result-panel', this.window);
+    if (rp) rp.style.display = 'none';
+  }
+
+  _bindSearch() {
+    const win = this.window;
+    const doSearch = async () => {
+      const q = ($('#search-q', win) || {}).value?.trim();
+      if (!q) return;
+      this._showResults(q);
+      // AIOS HOOK: replace mock below with actual AIOS Search Agent call
+      const data = await this.os.ds.post('search', { query: q });
+      this._showAnswer(q, data?.answer || '搜索中出现错误。');
+    };
+
+    const btn = $('#search-btn', win);
+    const inp = $('#search-q', win);
+    if (btn) btn.addEventListener('click', doSearch);
+    if (inp) inp.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+
+    $$('.search-chip', win).forEach(c => {
+      c.addEventListener('click', () => {
+        const inp2 = $('#search-q', win);
+        if (inp2) inp2.value = c.dataset.q;
+        doSearch();
+      });
+    });
+  }
+
+  _showResults(q) {
+    const home = $('#search-home', this.window);
+    const rp   = $('#search-result-panel', this.window);
+    if (home) home.style.display = 'none';
+    if (!rp)  return;
+    rp.style.display = 'block';
+    rp.innerHTML = `
+      <div style="padding:12px 16px 0;">
+        <button class="app-back" style="color:#007AFF;font-size:15px;" id="search-back-btn">
+          <svg width="10" height="17" viewBox="0 0 10 17" fill="none">
+            <path d="M9 1L1 8.5L9 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          &nbsp;搜索
+        </button>
+        <div style="font-size:18px;font-weight:600;color:#000;margin:8px 0 4px;">${q}</div>
+      </div>
+      <div class="search-results">
+        <div class="search-thinking">🤔 ORCA Search Agent 正在搜索…</div>
+      </div>`;
+    $('#search-back-btn', this.window)?.addEventListener('click', () => this._renderHome());
+  }
+
+  _showAnswer(q, answer) {
+    const rp = $('#search-result-panel', this.window);
+    if (!rp) return;
+    const results = rp.querySelector('.search-results');
+    if (!results) return;
+    results.innerHTML = `<div class="search-answer">
+      <div class="search-answer-header">
+        <span>✨ ORCA Search Agent</span>
+      </div>
+      ${answer.replace(/\n/g,'<br>').replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>')}
+    </div>`;
+  }
+
+  onClose() { this._renderHome(); }
+}
+
+// ── 8. CONTACTS APP ───────────────────────────────────────────────
+class ContactsApp extends BaseApp {
+  constructor(os) {
+    super(os, { id:'contacts', name:'联系人', icon:'📞', iconBg:'#34C759', headerBg:'#f2f2f7' });
+    this._data      = null;
+    this._activeTab = 'recents';
+    this._viewing   = null;
+  }
+
+  buildHTML() {
+    return `<div class="app-window-inner contacts-app" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
+      <div class="app-header no-border" style="background:#f2f2f7;">
+        <div class="app-title">📞&nbsp;通讯录</div>
+      </div>
+      <div class="contacts-tabs">
+        <div class="contacts-tab active" data-tab="recents">最近通话</div>
+        <div class="contacts-tab" data-tab="contacts">联系人</div>
+      </div>
+      <div id="contacts-body" class="app-content">
+        <div class="state-loading"><div class="spinner"></div></div>
+      </div>
+    </div>`;
+  }
+
+  async onOpen() {
+    this._bindTabs();
+    await this._loadData();
+    this._renderTab(this._activeTab);
+    this.startPoll(async () => {
+      await this._loadData(true);
+      if (!this._viewing) this._renderTab(this._activeTab);
+    });
+  }
+
+  onClose() { this.stopPoll(); this._viewing = null; }
+
+  _bindTabs() {
+    $$('.contacts-tab', this.window).forEach(t => {
+      t.addEventListener('click', () => {
+        $$('.contacts-tab', this.window).forEach(x => x.classList.remove('active'));
+        t.classList.add('active');
+        this._activeTab = t.dataset.tab;
+        this._viewing = null;
+        this._renderTab(this._activeTab);
+      });
+    });
+  }
+
+  async _loadData(force = false) {
+    this._data = await this.os.ds.get('contacts', force);
+  }
+
+  _renderTab(tab) {
+    const body = $('#contacts-body', this.window);
+    if (!body) return;
+    if (!this._data) { body.innerHTML = '<div class="state-error">无法加载联系人数据</div>'; return; }
+
+    if (tab === 'recents') {
+      const history = [...(this._data.history || [])].sort((a,b) => b.title.localeCompare(a.title));
+      if (!history.length) { body.innerHTML = '<div class="state-loading" style="color:#aaa;">暂无通话记录</div>'; return; }
+      body.innerHTML = `<div class="contacts-list">
+        ${history.map(h => this._recentItem(h)).join('')}
+      </div>`;
+      $$('.contact-item', body).forEach((item, i) => {
+        item.addEventListener('click', () => this._openContactDetail(history[i].content.contactor));
+      });
+    } else {
+      const profiles = this._data.profiles || {};
+      const names = Object.keys(profiles);
+      if (!names.length) { body.innerHTML = '<div class="state-loading" style="color:#aaa;">暂无联系人</div>'; return; }
+      body.innerHTML = `<div class="contacts-list">
+        ${names.map(name => this._contactItem(name, profiles[name])).join('')}
+      </div>`;
+      // match to history entry
+      $$('.contact-item', body).forEach((item, i) => {
+        const name = names[i];
+        item.addEventListener('click', () => this._openContactDetail(name));
+      });
+    }
+  }
+
+  _recentItem(h) {
+    const { contactor, data } = h.content;
+    const msgs = parseConversation(data, contactor);
+    const last = msgs[msgs.length - 1];
+    const preview = last ? `${last.isUser ? '我' : contactor}: ${last.text}` : '';
+    const color = avatarColor(contactor);
+    return `<div class="contact-item">
+      <div class="contact-avatar" style="background:${color}">${avatarLetter(contactor)}</div>
+      <div class="contact-info">
+        <div class="contact-name">${contactor}</div>
+        <div class="contact-preview">${preview}</div>
+      </div>
+      <div class="contact-time">${fmtDate(h.title)}</div>
+    </div>`;
+  }
+
+  _contactItem(name, profile) {
+    const color = avatarColor(name);
+    return `<div class="contact-item">
+      <div class="contact-avatar" style="background:${color}">${avatarLetter(name)}</div>
+      <div class="contact-info">
+        <div class="contact-name">${name}</div>
+        <div class="contact-sub">${profile['关系'] || ''}</div>
+      </div>
+    </div>`;
+  }
+
+  _latestHistory(name) {
+    const history = [...(this._data?.history || [])]
+      .filter(item => item?.content?.contactor === name)
+      .sort((a, b) => b.title.localeCompare(a.title));
+    return history[0] || null;
+  }
+
+  _openContactDetail(name) {
+    const profiles = this._data?.profiles || {};
+    const profile = profiles[name] || {};
+    const latest = this._latestHistory(name);
+    const color = avatarColor(name);
+    const latestPreview = latest
+      ? parseConversation(latest.content.data, name).slice(-1)[0]
+      : null;
+    const body = $('#contacts-body', this.window);
+    this._viewing = { type: 'detail', name };
+
+    body.innerHTML = `
+      <div class="contact-detail app-content">
+        <div class="app-header" style="background:#f2f2f7;border-bottom:1px solid rgba(0,0,0,.08);">
+          <button class="app-back" id="contact-detail-back">
+            <svg width="10" height="17" viewBox="0 0 10 17" fill="none">
+              <path d="M9 1L1 8.5L9 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            &nbsp;通讯录
+          </button>
+          <div class="app-title" style="text-align:center;font-size:15px;">联系人资料</div>
+          <div style="width:72px;"></div>
+        </div>
+
+        <div class="contact-detail-hero">
+          <div class="contact-detail-avatar" style="background:${color}">${avatarLetter(name)}</div>
+          <div class="contact-detail-name">${name}</div>
+          <div class="contact-detail-relation">${profile['关系'] || '联系人'}</div>
+        </div>
+
+        <div class="contact-detail-section">
+          <div class="contact-detail-card">
+            <div class="contact-detail-label">与我关系</div>
+            <div class="contact-detail-value">${profile['关系'] || '未填写'}</div>
+          </div>
+          <div class="contact-detail-card">
+            <div class="contact-detail-label">当前状态</div>
+            <div class="contact-detail-value">${profile['当前状态'] || '暂无更新'}</div>
+          </div>
+          <div class="contact-detail-card">
+            <div class="contact-detail-label">联系方式</div>
+            <div class="contact-detail-value">${profile.phone_number || '未填写'}</div>
+          </div>
+        </div>
+
+        <div class="contact-detail-section">
+          <div class="contact-detail-block-title">最近联系</div>
+          <div class="contact-detail-card">
+            <div class="contact-detail-label">最近时间</div>
+            <div class="contact-detail-value">${latest ? formatFullDate(latest.title) : '暂无记录'}</div>
+          </div>
+          <div class="contact-detail-card">
+            <div class="contact-detail-label">最近一条</div>
+            <div class="contact-detail-value">${latestPreview ? `${latestPreview.isUser ? '我' : name}：${latestPreview.text}` : '暂无消息'}</div>
+          </div>
+        </div>
+
+        ${latest ? `
+          <div class="contact-detail-actions">
+            <button class="contact-detail-action" id="contact-open-chat">查看最近聊天记录</button>
+          </div>
+        ` : ''}
+      </div>`;
+
+    $('#contact-detail-back', this.window)?.addEventListener('click', () => {
+      this._viewing = null;
+      this._renderTab(this._activeTab);
+    });
+    $('#contact-open-chat', this.window)?.addEventListener('click', () => this._openConversation(latest));
+  }
+
+  _openConversation(h) {
+    this._viewing = h;
+    const { contactor, data } = h.content;
+    const msgs = parseConversation(data, contactor);
+    const body = $('#contacts-body', this.window);
+    body.innerHTML = `
+      <div class="app-header" style="background:#f2f2f7;border-bottom:1px solid rgba(0,0,0,.08);">
+        <button class="app-back" id="conv-back">
+          <svg width="10" height="17" viewBox="0 0 10 17" fill="none">
+            <path d="M9 1L1 8.5L9 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          &nbsp;通讯录
+        </button>
+        <div class="app-title" style="text-align:center;font-size:15px;">
+          <div style="font-weight:600;">${contactor}</div>
+          <div style="font-size:11px;color:#888;font-weight:400;">${fmtDate(h.title)}</div>
+        </div>
+        <div style="width:60px;"></div>
+      </div>
+      <div class="conversation-view app-content">
+        <div class="conversation-msgs">
+          ${msgs.map(m => `
+            <div class="msg-bubble-wrap ${m.isUser?'user':'contact'}">
+              <div class="msg-bubble">${m.text}</div>
+            </div>`).join('')}
+        </div>
+      </div>`;
+    $('#conv-back', this.window)?.addEventListener('click', () => {
+      this._openContactDetail(contactor);
+    });
+    // scroll body to bottom to show latest messages
+    setTimeout(() => { body.scrollTop = body.scrollHeight; }, 80);
+  }
+}
+
+// ── 9. DOCUMENTS APP ─────────────────────────────────────────────
+class DocumentsApp extends BaseApp {
+  constructor(os) {
+    super(os, { id:'documents', name:'文档', icon:'📁', iconBg:'#FF9500', headerBg:'#f2f2f7' });
+  }
+
+  buildHTML() {
+    return `<div class="app-window-inner documents-app" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
+      <div class="app-header" style="background:#f2f2f7;">
+        <div class="app-title">📁&nbsp;工作文档</div>
+      </div>
+      <div id="doc-body" class="app-content">
+        <div class="state-loading"><div class="spinner"></div></div>
+      </div>
+    </div>`;
+  }
+
+  async onOpen() {
+    await this._render();
+    this.startPoll(() => this._render());
+  }
+  onClose() { this.stopPoll(); }
+
+  async _render(force = false) {
+    const data = await this.os.ds.get('documents', force);
+    const body = $('#doc-body', this.window);
+    if (!body) return;
+    if (!data || !data.exists) {
+      body.innerHTML = `<div class="doc-empty">
+        <div class="doc-empty-icon">📭</div>
+        <div class="doc-empty-title">暂无工作文档</div>
+        <div class="doc-empty-sub">运行 AIOS 后，Agent 生成的文件将在这里显示。<br>默认路径：demo/working_dir/</div>
+      </div>`; return;
+    }
+    if (!data.files.length) {
+      body.innerHTML = `<div class="doc-empty">
+        <div class="doc-empty-icon">📂</div>
+        <div class="doc-empty-title">文件夹为空</div>
+        <div class="doc-empty-sub">工作目录存在但尚无文件。</div>
+      </div>`; return;
+    }
+    body.innerHTML = `<div class="doc-list">
+      ${data.files.map(f => `
+        <div class="doc-item">
+          <span class="doc-item-icon">${f.is_dir ? '📂' : docIcon(f.name)}</span>
+          <div class="doc-item-info">
+            <div class="doc-item-name">${f.name}</div>
+            <div class="doc-item-meta">${f.is_dir ? '文件夹' : formatBytes(f.size)}</div>
+          </div>
+        </div>`).join('')}
+    </div>`;
+  }
+}
+
+// ── 10. PHOTOS APP ────────────────────────────────────────────────
+class PhotosApp extends BaseApp {
+  constructor(os) {
+    super(os, { id:'photos', name:'相册', icon:'📸', iconBg:'#1c1c1e', headerBg:'#000' });
+    this._photos  = [];
+    this._viewing = null;
+    this._photoIndex = 0;
+    this._detailBound = false;
+    this._backBound = false;
+  }
+
+  buildHTML() {
+    return `<div class="app-window-inner photos-app" style="flex:1;display:flex;flex-direction:column;overflow:hidden;background:#000;">
+      <div id="photos-grid-view" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
+        <div class="app-header photos-header">
+          <div class="app-title" style="color:#fff;">相册</div>
+        </div>
+        <div id="photos-grid-wrap" class="app-content photos-grid-wrap">
+          <div class="state-loading" style="color:rgba(255,255,255,.4);"><div class="spinner"></div></div>
+        </div>
+      </div>
+      <div id="photos-detail-view" style="display:none;flex:1;flex-direction:column;overflow:hidden;">
+        <div class="app-header photos-header">
+          <button class="app-back" id="photo-back" style="color:#007AFF;">
+            <svg width="10" height="17" viewBox="0 0 10 17" fill="none">
+              <path d="M9 1L1 8.5L9 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            &nbsp;相册
+          </button>
+          <div id="photo-detail-title" class="app-title" style="color:#fff;font-size:15px;">照片</div>
+          <div style="width:60px;"></div>
+        </div>
+        <div id="photo-detail-stage" class="app-content photo-detail-stage">
+          <div id="photo-detail-viewport" class="photo-detail-viewport">
+            <div id="photo-detail-track" class="photo-detail-track"></div>
+          </div>
+          <div id="photo-detail-counter" class="photo-detail-counter"></div>
+          <div id="photo-detail-desc" class="photo-detail-desc"></div>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  async onOpen() {
+    await this._loadPhotos();
+    this._renderGrid();
+    this.startPoll(async () => {
+      await this._loadPhotos(true);
+      this._renderGrid();
+      if (this._viewing) {
+        this._photoIndex = clamp(this._photoIndex, 0, Math.max(0, this._photos.length - 1));
+        this._renderDetail();
+      }
+    });
+    if (!this._backBound) {
+      this._backBound = true;
+      $('#photo-back', this.window)?.addEventListener('click', () => this._showGrid());
+    }
+    this._bindDetailViewer();
+  }
+  onClose() {
+    this.stopPoll();
+    this._viewing = null;
+    this._photoIndex = 0;
+    this._showGrid();
+  }
+
+  async _loadPhotos(force = false) {
+    const data = await this.os.ds.get('photos', force);
+    this._photos = data || [];
+  }
+
+  _renderGrid() {
+    const wrap = $('#photos-grid-wrap', this.window);
+    if (!wrap) return;
+    if (!this._photos.length) {
+      wrap.innerHTML = '<div class="photo-empty" style="color:rgba(255,255,255,.3);">📷<br>相册为空</div>'; return;
+    }
+    // Group by simple category
+    const sections = this._groupPhotos();
+    let html = '';
+    for (const { label, photos } of sections) {
+      html += `<div class="photo-section-title">${label}</div>
+        <div class="photos-grid">
+          ${photos.map((p, i) => `
+            <div class="photo-thumb" data-idx="${p.__idx}">
+              <img src="${p.url}" alt="${p.description}" loading="lazy" />
+            </div>`).join('')}
+        </div>`;
+    }
+    wrap.innerHTML = html;
+    $$('.photo-thumb', wrap).forEach(thumb => {
+      thumb.addEventListener('click', () => {
+        const idx = parseInt(thumb.dataset.idx);
+        this._openPhoto(idx);
+      });
+    });
+  }
+
+  _groupPhotos() {
+    const groups = { 'CVPR 2025':[], '云南之旅':[], '生活':[] };
+    this._photos.forEach((p, i) => {
+      p.__idx = i;
+      const name = p.filename;
+      if (name.includes('cvpr')) groups['CVPR 2025'].push(p);
+      else if (name.includes('云南') || name.includes('洱海') || name.includes('雪山')) groups['云南之旅'].push(p);
+      else groups['生活'].push(p);
+    });
+    return Object.entries(groups).filter(([,v])=>v.length).map(([k,v])=>({label:k, photos:v}));
+  }
+
+  _bindDetailViewer() {
+    if (this._detailBound) return;
+    this._detailBound = true;
+
+    const viewport = $('#photo-detail-viewport', this.window);
+    const track = $('#photo-detail-track', this.window);
+    const stage = $('#photo-detail-stage', this.window);
+    if (!viewport || !track || !stage) return;
+
+    let sx = 0;
+    let sy = 0;
+    let dx = 0;
+    let dy = 0;
+    let dragging = false;
+    let mode = '';
+
+    const resetStage = (animate = true) => {
+      if (animate) viewport.style.transition = '';
+      else viewport.style.transition = 'none';
+      viewport.style.transform = '';
+      viewport.style.opacity = '';
+      if (!animate) {
+        requestAnimationFrame(() => {
+          viewport.style.transition = '';
+        });
+      }
+    };
+
+    const applyHorizontal = () => {
+      track.style.transition = 'none';
+      track.style.transform = `translate3d(calc(${-this._photoIndex * 100}% + ${dx}px), 0, 0)`;
+    };
+
+    const applyVertical = () => {
+      const shift = clamp(dy, -220, 220);
+      viewport.style.transition = 'none';
+      viewport.style.transform = `translateY(${shift}px) scale(${clamp(1 - Math.abs(shift) / 900, 0.92, 1)})`;
+      viewport.style.opacity = `${clamp(1 - Math.abs(shift) / 260, 0.36, 1)}`;
+    };
+
+    const finish = () => {
+      if (!dragging) return;
+      dragging = false;
+
+      if (mode === 'horizontal') {
+        track.style.transition = '';
+        if (Math.abs(dx) > 60) {
+          this._setPhotoIndex(this._photoIndex + (dx < 0 ? 1 : -1));
+        } else {
+          this._syncDetailPhoto();
+        }
+        resetStage();
+      } else if (mode === 'vertical') {
+        track.style.transition = '';
+        if (Math.abs(dy) > 96) {
+          this._showGrid();
+        } else {
+          this._syncDetailPhoto();
+          resetStage();
+        }
+      } else {
+        this._syncDetailPhoto();
+        resetStage();
+      }
+
+      dx = 0;
+      dy = 0;
+      mode = '';
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      window.removeEventListener('touchmove', onTouchMove);
+      window.removeEventListener('touchend', onTouchEnd);
+    };
+
+    const onMouseMove = (evt) => {
+      if (!dragging) return;
+      dx = evt.clientX - sx;
+      dy = evt.clientY - sy;
+      if (!mode && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
+        mode = Math.abs(dx) > Math.abs(dy) ? 'horizontal' : 'vertical';
+      }
+      if (mode === 'horizontal') applyHorizontal();
+      if (mode === 'vertical') applyVertical();
+      evt.preventDefault();
+    };
+
+    const onMouseUp = () => finish();
+
+    const onTouchMove = (evt) => {
+      const touch = evt.touches?.[0];
+      if (!touch || !dragging) return;
+      dx = touch.clientX - sx;
+      dy = touch.clientY - sy;
+      if (!mode && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
+        mode = Math.abs(dx) > Math.abs(dy) ? 'horizontal' : 'vertical';
+      }
+      if (mode === 'horizontal') applyHorizontal();
+      if (mode === 'vertical') applyVertical();
+      evt.preventDefault();
+    };
+
+    const onTouchEnd = () => finish();
+
+    viewport.addEventListener('mousedown', (evt) => {
+      if (!this._viewing) return;
+      sx = evt.clientX;
+      sy = evt.clientY;
+      dx = 0;
+      dy = 0;
+      mode = '';
+      dragging = true;
+      evt.preventDefault();
+      window.addEventListener('mousemove', onMouseMove);
+      window.addEventListener('mouseup', onMouseUp, { once: true });
+    });
+
+    viewport.addEventListener('touchstart', (evt) => {
+      const touch = evt.touches?.[0];
+      if (!touch || !this._viewing) return;
+      sx = touch.clientX;
+      sy = touch.clientY;
+      dx = 0;
+      dy = 0;
+      mode = '';
+      dragging = true;
+      window.addEventListener('touchmove', onTouchMove, { passive: false });
+      window.addEventListener('touchend', onTouchEnd, { once: true });
+    }, { passive: true });
+  }
+
+  _renderDetail() {
+    const track = $('#photo-detail-track', this.window);
+    if (!track) return;
+    track.innerHTML = this._photos.map((photo) => `
+      <div class="photo-detail-slide">
+        <img src="${photo.url}" alt="${escapeHTML(photo.description || '照片')}" loading="lazy" />
+      </div>
+    `).join('');
+    this._syncDetailPhoto(false);
+  }
+
+  _syncDetailPhoto(animate = true) {
+    const track = $('#photo-detail-track', this.window);
+    const viewport = $('#photo-detail-viewport', this.window);
+    const current = this._photos[this._photoIndex];
+    if (!track || !current) return;
+
+    if (!animate) track.style.transition = 'none';
+    track.style.transform = `translate3d(-${this._photoIndex * 100}%, 0, 0)`;
+    if (!animate) {
+      requestAnimationFrame(() => {
+        track.style.transition = '';
+      });
+    }
+
+    if (viewport) {
+      viewport.style.transition = '';
+      viewport.style.transform = '';
+      viewport.style.opacity = '';
+    }
+
+    this._viewing = current;
+    const title = $('#photo-detail-title', this.window);
+    const counter = $('#photo-detail-counter', this.window);
+    const desc = $('#photo-detail-desc', this.window);
+    if (title) title.textContent = '照片';
+    if (counter) counter.textContent = `${this._photoIndex + 1} / ${this._photos.length}`;
+    if (desc) desc.textContent = current.description || '';
+  }
+
+  _setPhotoIndex(index) {
+    if (!this._photos.length) return;
+    this._photoIndex = clamp(index, 0, this._photos.length - 1);
+    this._syncDetailPhoto();
+  }
+
+  _openPhoto(photoOrIndex) {
+    const index = typeof photoOrIndex === 'number'
+      ? photoOrIndex
+      : this._photos.findIndex((photo) => photo.url === photoOrIndex?.url);
+    this._photoIndex = clamp(index >= 0 ? index : 0, 0, Math.max(0, this._photos.length - 1));
+    this._viewing = this._photos[this._photoIndex] || null;
+    const gridV  = $('#photos-grid-view', this.window);
+    const detailV = $('#photos-detail-view', this.window);
+    if (gridV)  { gridV.style.display  = 'none'; }
+    if (detailV){ detailV.style.display = 'flex'; }
+    this._renderDetail();
+  }
+
+  _showGrid() {
+    this._viewing = null;
+    const gridV   = $('#photos-grid-view',  this.window);
+    const detailV = $('#photos-detail-view', this.window);
+    if (gridV)  { gridV.style.display   = 'flex'; }
+    if (detailV){ detailV.style.display = 'none'; }
+  }
+}
+
+// ── 11. 小红书 APP ────────────────────────────────────────────────
+class XiaoHongShuApp extends BaseApp {
+  constructor(os) {
+    super(os, { id:'xiaohongshu', name:'小红书', icon:'🌹', iconBg:'#FF2442', headerBg:'#fff' });
+    this._posts   = [];
+    this._viewing = null;
+    this._isComposing = false;
+    this._photoLibrary = [];
+    this._draft = null;
+    this._detailIndex = 0;
+  }
+
+  buildHTML() {
+    return `<div class="app-window-inner xhs-app" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
+      <div class="app-header xhs-header">
+        <div class="app-title xhs-logo">小红书</div>
+      </div>
+      <div id="xhs-body" class="app-content" style="background:#f5f5f5;"></div>
+    </div>`;
+  }
+
+  async onOpen() {
+    await Promise.all([this._loadPosts(), this._loadPhotoLibrary()]);
+    this._renderFeed();
+    this.startPoll(async () => {
+      if (this._viewing || this._isComposing) return;
+      await this._loadPosts(true);
+      this._renderFeed();
+    });
+  }
+  onClose() {
+    this.stopPoll();
+    this._viewing = null;
+    this._isComposing = false;
+    this._draft = null;
+    this._detailIndex = 0;
+  }
+
+  async _loadPosts(force = false) {
+    const data = await this.os.ds.get('xiaohongshu', force);
+    this._posts = data || [];
+  }
+
+  async _loadPhotoLibrary(force = false) {
+    const data = await this.os.ds.get('photos', force);
+    this._photoLibrary = data || [];
+  }
+
+  _renderFeed() {
+    const body = $('#xhs-body', this.window);
+    if (!body) return;
+    body.innerHTML = `
+      <div class="xhs-feed-shell">
+        <div class="xhs-feed-toolbar">
+          <div>
+            <div class="xhs-feed-title">我的笔记</div>
+            <div class="xhs-feed-subtitle">发布内容会直接写回 mock_data</div>
+          </div>
+          <button id="xhs-compose-btn" class="xhs-compose-btn">发布</button>
+        </div>
+        ${this._posts.length ? `
+          <div class="xhs-feed">
+            ${this._posts.map((p, i) => this._postCard(p, i)).join('')}
+          </div>
+        ` : '<div class="xhs-empty">🌹<br>暂无笔记</div>'}
+      </div>
+    `;
+    $('#xhs-compose-btn', body)?.addEventListener('click', () => this._openComposer());
+    $$('.xhs-card', body).forEach((card, i) => {
+      card.addEventListener('click', () => this._openPost(this._posts[i]));
+    });
+  }
+
+  _postCard(post) {
+    const tags = (post.text || '').match(/#[\u4e00-\u9fa5\w]+/g) || [];
+    const preview = escapeHTML((post.text || '').replace(/#[\u4e00-\u9fa5\w]+/g, '').trim().slice(0, 80));
+    const date = post.created_at ? fmtDate(post.created_at) : '';
+    const cover = post.image_urls?.[0];
+    return `<div class="xhs-card">
+      <div class="xhs-card-img">${cover ? `<img src="${cover}" alt="${escapeHTML(post.title || '小红书封面')}" loading="lazy" />` : '🌹'}</div>
+      <div class="xhs-card-body">
+        <div class="xhs-card-title">${escapeHTML(post.title || '笔记')}</div>
+        <div class="xhs-card-text">${preview}${preview ? '…' : ''}</div>
+        <div class="xhs-card-tags">${tags.slice(0,5).map(t=>`<span class="xhs-tag">${t}</span>`).join('')}</div>
+        <div class="xhs-card-meta">
+          <span class="xhs-card-date">${date}</span>
+          <span class="xhs-card-count">${post.image_urls?.length || 0} 图</span>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  _openPost(post) {
+    this._viewing = post;
+    this._isComposing = false;
+    this._detailIndex = 0;
+    const body = $('#xhs-body', this.window);
+    if (!body) return;
+    const tags = (post.text||'').match(/#[\u4e00-\u9fa5\w]+/g) || [];
+    const content = escapeHTML((post.text||'').replace(/#[\u4e00-\u9fa5\w]+/g,'').trim());
+    const date = post.created_at ? new Date(post.created_at).toLocaleDateString('zh-CN') : '';
+    const images = (post.image_urls || []).filter(Boolean);
+    body.innerHTML = `
+      <div class="app-header xhs-header">
+        <button class="app-back" id="xhs-back" style="color:#FF2442;">
+          <svg width="10" height="17" viewBox="0 0 10 17" fill="none">
+            <path d="M9 1L1 8.5L9 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          &nbsp;小红书
+        </button>
+        <div class="app-title xhs-logo">笔记详情</div>
+        ${post.id ? '<button id="xhs-delete-btn" class="xhs-delete-btn">删除</button>' : '<div class="xhs-header-spacer"></div>'}
+      </div>
+      <div class="app-content xhs-detail-scroll" style="padding:0;">
+        <div class="xhs-detail-cover ${images.length > 1 ? 'is-carousel' : ''}">
+          <div id="xhs-detail-viewport" class="xhs-detail-viewport">
+            <div id="xhs-detail-track" class="xhs-detail-track">
+              ${(images.length ? images : [null]).map((url, idx) => `
+                <div class="xhs-detail-slide ${url ? '' : 'is-empty'}">
+                  ${url ? `<img src="${url}" alt="${escapeHTML(`${post.title || '小红书图片'} ${idx + 1}`)}" />` : '<div class="xhs-detail-empty">🌹</div>'}
+                </div>
+              `).join('')}
+            </div>
+          </div>
+          ${images.length > 1 ? `
+            <div id="xhs-detail-counter" class="xhs-detail-counter">1 / ${images.length}</div>
+            <div class="xhs-detail-dots">
+              ${images.map((_, idx) => `<button class="xhs-detail-dot ${idx === 0 ? 'is-active' : ''}" data-index="${idx}" aria-label="查看第 ${idx + 1} 张图片"></button>`).join('')}
+            </div>
+          ` : ''}
+        </div>
+        <div class="xhs-detail">
+          <div class="xhs-detail-title">${escapeHTML(post.title||'笔记')}</div>
+          <div class="xhs-detail-text">${content}</div>
+          <div class="xhs-card-tags" style="margin-top:12px;">${tags.map(t=>`<span class="xhs-tag">${t}</span>`).join('')}</div>
+          <div class="xhs-detail-date">${date}</div>
+        </div>
+      </div>`;
+    $('#xhs-back', this.window)?.addEventListener('click', () => {
+      this._viewing = null;
+      this._detailIndex = 0;
+      this._renderFeed();
+    });
+    $('#xhs-delete-btn', this.window)?.addEventListener('click', () => this._deleteViewingPost());
+    this._bindPostCarousel();
+    this._syncPostCarousel(false);
+  }
+
+  _openComposer() {
+    this._viewing = null;
+    this._isComposing = true;
+    this._draft = this._draft || { title: '', text: '', imageFilenames: [] };
+
+    const body = $('#xhs-body', this.window);
+    body.innerHTML = `
+      <div class="app-header xhs-header">
+        <button class="app-back" id="xhs-compose-back" style="color:#FF2442;">
+          <svg width="10" height="17" viewBox="0 0 10 17" fill="none">
+            <path d="M9 1L1 8.5L9 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          &nbsp;小红书
+        </button>
+        <div class="app-title xhs-logo">发布笔记</div>
+        <button id="xhs-publish-btn" class="xhs-publish-btn">发布</button>
+      </div>
+      <div class="app-content xhs-compose">
+        <div class="xhs-compose-card">
+          <div class="xhs-compose-label">标题</div>
+          <input id="xhs-title-input" class="xhs-compose-input" type="text" maxlength="60" placeholder="给这条笔记起个标题" value="${escapeHTML(this._draft.title)}" />
+        </div>
+        <div class="xhs-compose-card">
+          <div class="xhs-compose-label">正文</div>
+          <textarea id="xhs-text-input" class="xhs-compose-textarea" placeholder="分享此刻的内容、地点、灵感或攻略">${escapeHTML(this._draft.text)}</textarea>
+        </div>
+        <div class="xhs-compose-card">
+          <div class="xhs-compose-head">
+            <div class="xhs-compose-label">选择图片</div>
+            <div id="xhs-photo-count" class="xhs-photo-count">${this._draft.imageFilenames.length} / ${this._photoLibrary.length}</div>
+          </div>
+          <div id="xhs-selected-strip" class="xhs-selected-strip"></div>
+          <div class="xhs-photo-grid">
+            ${this._photoLibrary.map((photo) => `
+              <button class="xhs-photo-pick ${this._draft.imageFilenames.includes(photo.filename) ? 'is-selected' : ''}" data-file="${escapeHTML(photo.filename)}">
+                <img src="${photo.url}" alt="${escapeHTML(photo.description)}" loading="lazy" />
+                <span class="xhs-photo-check"></span>
+              </button>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+    `;
+
+    $('#xhs-compose-back', body)?.addEventListener('click', () => {
+      this._isComposing = false;
+      this._draft = null;
+      this._renderFeed();
+    });
+    $('#xhs-title-input', body)?.addEventListener('input', (evt) => {
+      this._draft.title = evt.target.value;
+    });
+    $('#xhs-text-input', body)?.addEventListener('input', (evt) => {
+      this._draft.text = evt.target.value;
+    });
+    $('#xhs-publish-btn', body)?.addEventListener('click', () => this._publishDraft());
+    $$('.xhs-photo-pick', body).forEach((btn) => {
+      btn.addEventListener('click', () => this._toggleDraftPhoto(btn.dataset.file));
+    });
+    this._renderDraftSelection();
+  }
+
+  _toggleDraftPhoto(filename) {
+    if (!this._draft) return;
+    const picked = new Set(this._draft.imageFilenames);
+    if (picked.has(filename)) picked.delete(filename);
+    else picked.add(filename);
+    this._draft.imageFilenames = [...picked];
+    $$('.xhs-photo-pick', this.window).forEach((btn) => {
+      btn.classList.toggle('is-selected', picked.has(btn.dataset.file));
+    });
+    this._renderDraftSelection();
+  }
+
+  _renderDraftSelection() {
+    const strip = $('#xhs-selected-strip', this.window);
+    const count = $('#xhs-photo-count', this.window);
+    if (count) count.textContent = `${this._draft?.imageFilenames?.length || 0} / ${this._photoLibrary.length}`;
+    if (!strip) return;
+
+    const selected = this._photoLibrary.filter((photo) => this._draft?.imageFilenames?.includes(photo.filename));
+    if (!selected.length) {
+      strip.innerHTML = '<div class="xhs-selected-empty">未选择图片，发布时也可以只发文字。</div>';
+      return;
+    }
+
+    strip.innerHTML = selected.map((photo) => `
+      <div class="xhs-selected-thumb">
+        <img src="${photo.url}" alt="${escapeHTML(photo.description)}" loading="lazy" />
+      </div>
+    `).join('');
+  }
+
+  async _publishDraft() {
+    const title = this._draft?.title?.trim() || '';
+    const text = this._draft?.text?.trim() || '';
+    const imageFilenames = this._draft?.imageFilenames || [];
+
+    if (!title && !text) {
+      window.alert('请先输入标题或正文。');
+      return;
+    }
+    if (!window.confirm('确认发布这条小红书笔记吗？')) return;
+
+    const result = await this.os.ds.post('xiaohongshu', { title, text, image_filenames: imageFilenames });
+    if (!result?.ok) {
+      window.alert('发布失败，请稍后重试。');
+      return;
+    }
+
+    await this._loadPosts(true);
+    this._isComposing = false;
+    this._draft = null;
+    this._renderFeed();
+    this.os.notifMgr.show({
+      app: 'xiaohongshu',
+      title: '小红书已发布',
+      message: result.post?.title || '新笔记已写入 mock_data',
+    });
+  }
+
+  _bindPostCarousel() {
+    const images = this._viewing?.image_urls || [];
+    const viewport = $('#xhs-detail-viewport', this.window);
+    const track = $('#xhs-detail-track', this.window);
+    if (!viewport || !track || images.length < 2) return;
+
+    let dragging = false;
+    let startX = 0;
+    let deltaX = 0;
+
+    const applyDrag = (clientX) => {
+      if (!dragging) return;
+      deltaX = clamp(clientX - startX, -180, 180);
+      track.style.transition = 'none';
+      track.style.transform = `translate3d(calc(${-this._detailIndex * 100}% + ${deltaX}px), 0, 0)`;
+    };
+
+    const settle = () => {
+      if (!dragging) return;
+      dragging = false;
+      track.style.transition = '';
+      if (Math.abs(deltaX) > 54) {
+        this._setPostCarouselIndex(this._detailIndex + (deltaX < 0 ? 1 : -1));
+      } else {
+        this._syncPostCarousel();
+      }
+      deltaX = 0;
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      window.removeEventListener('touchmove', onTouchMove);
+      window.removeEventListener('touchend', onTouchEnd);
+    };
+
+    const onMouseMove = (evt) => {
+      evt.preventDefault();
+      applyDrag(evt.clientX);
+    };
+    const onMouseUp = () => settle();
+    const onTouchMove = (evt) => {
+      const touch = evt.touches?.[0];
+      if (!touch) return;
+      applyDrag(touch.clientX);
+      evt.preventDefault();
+    };
+    const onTouchEnd = () => settle();
+
+    viewport.addEventListener('mousedown', (evt) => {
+      dragging = true;
+      startX = evt.clientX;
+      deltaX = 0;
+      window.addEventListener('mousemove', onMouseMove);
+      window.addEventListener('mouseup', onMouseUp, { once: true });
+      evt.preventDefault();
+    });
+    viewport.addEventListener('touchstart', (evt) => {
+      const touch = evt.touches?.[0];
+      if (!touch) return;
+      dragging = true;
+      startX = touch.clientX;
+      deltaX = 0;
+      window.addEventListener('touchmove', onTouchMove, { passive: false });
+      window.addEventListener('touchend', onTouchEnd, { once: true });
+    }, { passive: true });
+
+    $$('.xhs-detail-dot', this.window).forEach((dot, idx) => {
+      dot.addEventListener('click', () => this._setPostCarouselIndex(idx));
+    });
+  }
+
+  _syncPostCarousel(animate = true) {
+    const track = $('#xhs-detail-track', this.window);
+    if (track) {
+      if (!animate) track.style.transition = 'none';
+      track.style.transform = `translate3d(-${this._detailIndex * 100}%, 0, 0)`;
+      if (!animate) {
+        requestAnimationFrame(() => {
+          if (track) track.style.transition = '';
+        });
+      }
+    }
+
+    const total = this._viewing?.image_urls?.length || 0;
+    const counter = $('#xhs-detail-counter', this.window);
+    if (counter) counter.textContent = `${this._detailIndex + 1} / ${total}`;
+    $$('.xhs-detail-dot', this.window).forEach((dot, idx) => {
+      dot.classList.toggle('is-active', idx === this._detailIndex);
+    });
+  }
+
+  _setPostCarouselIndex(index) {
+    const total = this._viewing?.image_urls?.length || 0;
+    if (!total) return;
+    this._detailIndex = clamp(index, 0, total - 1);
+    this._syncPostCarousel();
+  }
+
+  async _deleteViewingPost() {
+    const post = this._viewing;
+    if (!post?.id) return;
+    if (!window.confirm('确认删除这条小红书笔记吗？')) return;
+
+    const result = await this.os.ds.post('xiaohongshu', {
+      action: 'delete',
+      id: post.id,
+    });
+    if (!result?.ok) {
+      window.alert('删除失败，请稍后重试。');
+      return;
+    }
+
+    const title = post.title || '笔记';
+    await this._loadPosts(true);
+    this._viewing = null;
+    this._detailIndex = 0;
+    this._renderFeed();
+    this.os.notifMgr.show({
+      app: 'xiaohongshu',
+      title: '小红书已删除',
+      message: title,
+    });
+  }
+}
+
+// ── 12. NOTES APP ─────────────────────────────────────────────────
+class NotesApp extends BaseApp {
+  constructor(os) {
+    super(os, { id:'notes', name:'备忘录', icon:'📝', iconBg:'#FFDE01', headerBg:'#f2f2f7' });
+    this._notes   = [];
+    this._mode    = 'list';
+    this._editing = null;
+  }
+
+  buildHTML() {
+    return `<div class="app-window-inner notes-app" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
+      <div class="app-header notes-header">
+        <div class="app-title">📝&nbsp;备忘录</div>
+      </div>
+      <div id="notes-body" class="app-content"></div>
+    </div>`;
+  }
+
+  async onOpen() {
+    await this._load();
+    this._renderList();
+    this.startPoll(async () => {
+      if (this._mode !== 'list') return;
+      await this._load(true);
+      this._renderList();
+    });
+  }
+  onClose() {
+    this.stopPoll();
+    this._mode = 'list';
+    this._editing = null;
+  }
+
+  async _load(force = false) {
+    const data = await this.os.ds.get('notes', force);
+    this._notes = [...(data || [])].sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
+  }
+
+  _renderList() {
+    const body = $('#notes-body', this.window);
+    if (!body) return;
+    this._mode = 'list';
+    body.innerHTML = `
+      <div class="notes-shell">
+        <div class="notes-toolbar">
+          <div>
+            <div class="notes-toolbar-title">最近编辑</div>
+            <div class="notes-toolbar-subtitle">修改后会直接保存到 mock_data</div>
+          </div>
+          <button id="notes-create-btn" class="notes-create-btn">新建</button>
+        </div>
+        ${this._notes.length ? `
+          <div class="notes-list">
+            ${this._notes.map((n, i) => `
+              <div class="note-item" data-idx="${i}">
+                <div class="note-title">${escapeHTML(n.title || '未命名备忘录')}</div>
+                <div class="note-preview">${escapeHTML((n.content || '').replace(/\s+/g, ' ').trim().slice(0,72) || '点击继续编辑内容')}</div>
+                <div class="note-meta">${n.updated_at ? formatFullDate(n.updated_at) : ''}</div>
+              </div>`).join('')}
+          </div>
+        ` : '<div class="state-loading" style="color:#aaa;">暂无备忘录</div>'}
+      </div>
+    `;
+    $('#notes-create-btn', body)?.addEventListener('click', () => this._openEditor());
+    $$('.note-item', body).forEach(item => {
+      item.addEventListener('click', () => this._openEditor(this._notes[+item.dataset.idx]));
+    });
+  }
+
+  _openEditor(note = null) {
+    this._mode = 'editor';
+    this._editing = note ? { ...note } : { id: '', title: '', content: '', updated_at: '' };
+    const body = $('#notes-body', this.window);
+    body.innerHTML = `
+      <div class="app-header notes-header" style="border-bottom:1px solid rgba(0,0,0,.08);">
+        <button class="app-back" id="note-back">
+          <svg width="10" height="17" viewBox="0 0 10 17" fill="none">
+            <path d="M9 1L1 8.5L9 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          &nbsp;备忘录
+        </button>
+        <div class="app-title">编辑备忘录</div>
+        <div class="note-header-actions">
+          ${this._editing.id ? '<button id="note-delete" class="note-delete-btn">删除</button>' : ''}
+          <button id="note-save" class="note-save-btn">保存</button>
+        </div>
+      </div>
+      <div class="app-content note-editor">
+        <input id="note-editor-title" class="note-editor-title" type="text" maxlength="80" placeholder="标题" value="${escapeHTML(this._editing.title || '')}" />
+        <div class="note-editor-meta">${this._editing.updated_at ? `上次更新 ${formatFullDate(this._editing.updated_at)}` : '新建备忘录'}</div>
+        <textarea id="note-editor-content" class="note-editor-content" placeholder="记录你的想法、事项、草稿或命令...">${escapeHTML(this._editing.content || '')}</textarea>
+      </div>`;
+    $('#note-back', this.window)?.addEventListener('click', () => {
+      this._editing = null;
+      this._renderList();
+    });
+    $('#note-delete', this.window)?.addEventListener('click', () => this._deleteEditor());
+    $('#note-save', this.window)?.addEventListener('click', () => this._saveEditor());
+  }
+
+  async _saveEditor() {
+    const title = ($('#note-editor-title', this.window)?.value || '').trim() || '未命名备忘录';
+    const content = ($('#note-editor-content', this.window)?.value || '').trim();
+    const result = await this.os.ds.post('notes', {
+      id: this._editing?.id || '',
+      title,
+      content,
+    });
+
+    if (!result?.ok) {
+      window.alert('保存失败，请稍后重试。');
+      return;
+    }
+
+    await this._load(true);
+    this._editing = result.note || null;
+    this.os.notifMgr.show({
+      app: 'notes',
+      title: '备忘录已保存',
+      message: title,
+    });
+    this._openEditor(this._editing);
+  }
+
+  async _deleteEditor() {
+    const note = this._editing;
+    if (!note?.id) return;
+    if (!window.confirm('确认删除这条备忘录吗？')) return;
+
+    const result = await this.os.ds.post('notes', {
+      action: 'delete',
+      id: note.id,
+    });
+    if (!result?.ok) {
+      window.alert('删除失败，请稍后重试。');
+      return;
+    }
+
+    const title = note.title || '未命名备忘录';
+    await this._load(true);
+    this._editing = null;
+    this._renderList();
+    this.os.notifMgr.show({
+      app: 'notes',
+      title: '备忘录已删除',
+      message: title,
+    });
+  }
+}
+
+// ── 13. 携程 APP ──────────────────────────────────────────────────
+class XiechengApp extends BaseApp {
+  constructor(os) {
+    super(os, { id:'xiecheng', name:'携程旅行', icon:'✈️', iconBg:'#0077A8', headerBg:'#0077A8' });
+    this._data   = null;
+    this._tabIdx = 0;
+  }
+
+  buildHTML() {
+    return `<div class="app-window-inner xiecheng-app" style="flex:1;display:flex;flex-direction:column;overflow:hidden;background:#0077A8;">
+      <div class="app-header xiecheng-header">
+        <div class="app-title" style="color:#fff;font-size:18px;font-weight:700;">携程旅行</div>
+      </div>
+      <div class="xiecheng-tabs">
+        <div class="xiecheng-tab active" data-tab="0">订单</div>
+        <div class="xiecheng-tab" data-tab="1">攻略</div>
+        <div class="xiecheng-tab" data-tab="2">景点</div>
+      </div>
+      <div id="xiecheng-body" class="app-content" style="background:#f2f2f7;"></div>
+    </div>`;
+  }
+
+  async onOpen() {
+    this._bindTabs();
+    await this._load();
+    this._renderTab(this._tabIdx);
+    this.startPoll(async () => { await this._load(true); this._renderTab(this._tabIdx); });
+  }
+  onClose() { this.stopPoll(); }
+
+  _bindTabs() {
+    $$('.xiecheng-tab', this.window).forEach(t => {
+      t.addEventListener('click', () => {
+        $$('.xiecheng-tab', this.window).forEach(x => x.classList.remove('active'));
+        t.classList.add('active');
+        this._tabIdx = +t.dataset.tab;
+        this._renderTab(this._tabIdx);
+      });
+    });
+  }
+
+  async _load(force = false) {
+    this._data = await this.os.ds.get('xiecheng', force);
+  }
+
+  _renderTab(idx) {
+    const body = $('#xiecheng-body', this.window);
+    if (!body || !this._data) return;
+    const tabs = ['orders','guides','attractions'];
+    const key  = tabs[idx];
+    const items = this._data[key] || [];
+
+    if (!items.length) { body.innerHTML = '<div class="state-loading" style="color:#aaa;padding-top:40px;">暂无数据</div>'; return; }
+
+    if (key === 'orders') {
+      body.innerHTML = `<div class="xiecheng-list">
+        ${items.map(o => this._orderCard(o)).join('')}
+      </div>`;
+    } else if (key === 'guides') {
+      body.innerHTML = `<div class="xiecheng-list">
+        ${items.map(g => `<div class="guide-card">
+          <div class="guide-title">${g.content?.title || g.title || '攻略'}</div>
+          <div class="guide-summary">${(g.content?.itinerary || g.content?.summary || g.content?.data || '').slice(0,160)}</div>
+          <div class="guide-meta">${[
+            g.content?.destination,
+            g.content?.author,
+          ].filter(Boolean).join(' · ')}</div>
+        </div>`).join('')}
+      </div>`;
+    } else {
+      body.innerHTML = `<div class="xiecheng-list">
+        ${items.map(a => `<div class="attr-card">
+          <div class="attr-name">${a.content?.name || a.title || '景点'}</div>
+          <div class="attr-desc">${(a.content?.description || a.content?.data || '').slice(0,120)}</div>
+          <div class="attr-meta">${[
+            a.content?.city,
+            a.content?.opening_hours,
+          ].filter(Boolean).join(' · ')}</div>
+        </div>`).join('')}
+      </div>`;
+    }
+  }
+
+  _orderCard(o) {
+    const c    = o.content || {};
+    const type = c.order_type === 'flight' ? '✈️ 机票'
+      : c.order_type === 'hotel' ? '🏨 酒店'
+      : c.order_type === 'train' ? '🚄 火车'
+      : '🎫 门票';
+    const statusMap = {
+      completed: ['completed', '已完成'],
+      confirmed: ['upcoming', '已确认'],
+      planned: ['planned', '计划中'],
+    };
+    const [status, statusTxt] = statusMap[c.status] || ['upcoming', '待出行'];
+    const title = c.order_type === 'flight'
+      ? `${c.departure} → ${c.destination}　${c.details?.flight_no||''}`
+      : c.order_type === 'hotel'
+      ? `${c.destination} ${c.details?.hotel_name||''}`
+      : c.order_type === 'train'
+      ? `${c.departure} → ${c.destination}　${c.details?.train_no||''}`
+      : `${c.details?.attraction_name || c.destination || ''}`;
+    return `<div class="order-card">
+      <div class="order-type">${type}</div>
+      <div class="order-title">${title}</div>
+      <div class="order-dates">${c.start_date||''} ${c.end_date&&c.end_date!==c.start_date?' — '+c.end_date:''}</div>
+      <div class="order-status ${status}">${statusTxt}</div>
+    </div>`;
+  }
+}
+
+// ── 14. CALENDAR APP ──────────────────────────────────────────────
+class CalendarApp extends BaseApp {
+  constructor(os) {
+    super(os, { id:'calendar', name:'日历', icon:'📅', iconBg:'#FF3B30', headerBg:'#fff' });
+    const now = new Date();
+    this._cursor = new Date(now.getFullYear(), now.getMonth(), 1);
+    this._selected = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    this._events = [];
+    this._swipeBound = false;
+  }
+
+  buildHTML() {
+    return `<div class="app-window-inner calendar-app" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
+      <div class="calendar-shell">
+        <div class="calendar-topbar">
+          <div>
+            <div class="calendar-caption">今天</div>
+            <div id="calendar-today-label" class="calendar-today-label"></div>
+          </div>
+          <div class="calendar-mini-date" id="calendar-mini-date"></div>
+        </div>
+
+        <div class="calendar-header">
+          <button class="calendar-nav-btn" id="calendar-prev" aria-label="上个月">‹</button>
+          <div class="calendar-month-wrap">
+            <div id="calendar-month-title" class="calendar-month-title"></div>
+            <div class="calendar-month-sub">行程与提醒</div>
+          </div>
+          <button class="calendar-nav-btn" id="calendar-next" aria-label="下个月">›</button>
+        </div>
+
+        <div class="calendar-weekdays">
+          <span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span>
+        </div>
+        <div id="calendar-grid" class="calendar-grid"></div>
+        <div id="calendar-agenda" class="calendar-agenda"></div>
+      </div>
+    </div>`;
+  }
+
+  async onOpen() {
+    await this._load(true);
+    this._render();
+    $('#calendar-prev', this.window)?.addEventListener('click', () => this._shiftMonth(-1));
+    $('#calendar-next', this.window)?.addEventListener('click', () => this._shiftMonth(1));
+    this._bindSwipe();
+    this.startPoll(async () => {
+      await this._load(true);
+      this._render();
+    });
+  }
+
+  onClose() { this.stopPoll(); }
+
+  async _load(force = false) {
+    const data = await this.os.ds.get('xiecheng', force);
+    const orders = data?.orders || [];
+    this._events = [];
+
+    for (const order of orders) {
+      const c = order.content || {};
+      const start = parseDateOnly(c.start_date);
+      const end = parseDateOnly(c.end_date || c.start_date);
+      if (!start || !end) continue;
+
+      const title = c.order_type === 'flight'
+        ? `${c.departure} → ${c.destination}`
+        : c.order_type === 'hotel'
+        ? `${c.details?.hotel_name || c.destination}`
+        : c.order_type === 'train'
+        ? `${c.departure} → ${c.destination}`
+        : `${c.details?.attraction_name || c.destination || '行程'}`;
+
+      const status = c.status || 'planned';
+      const cursor = new Date(start);
+      while (cursor <= end) {
+        this._events.push({
+          day: dateKey(cursor),
+          title,
+          status,
+          type: c.order_type || 'ticket',
+          time: c.details?.departure_time || c.details?.visit_date || '',
+          raw: order,
+        });
+        cursor.setDate(cursor.getDate() + 1);
+      }
+    }
+  }
+
+  _shiftMonth(delta) {
+    this._cursor = new Date(this._cursor.getFullYear(), this._cursor.getMonth() + delta, 1);
+    if (!sameMonth(this._selected, this._cursor)) {
+      this._selected = new Date(this._cursor.getFullYear(), this._cursor.getMonth(), 1);
+    }
+    this._render();
+  }
+
+  _bindSwipe() {
+    if (this._swipeBound) return;
+    this._swipeBound = true;
+    const grid = $('#calendar-grid', this.window);
+    if (!grid) return;
+    let sx = 0, sy = 0, dragging = false;
+
+    grid.addEventListener('mousedown', (e) => {
+      sx = e.clientX;
+      sy = e.clientY;
+      dragging = true;
+    });
+
+    window.addEventListener('mouseup', (e) => {
+      if (!dragging) return;
+      dragging = false;
+      const dx = e.clientX - sx;
+      const dy = e.clientY - sy;
+      if (Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy)) {
+        this._shiftMonth(dx < 0 ? 1 : -1);
+      }
+    });
+  }
+
+  _render() {
+    $('#calendar-today-label', this.window).textContent = formatFullDate(new Date());
+    $('#calendar-mini-date', this.window).textContent = String(new Date().getDate());
+    $('#calendar-month-title', this.window).textContent = monthTitle(this._cursor);
+
+    const grid = $('#calendar-grid', this.window);
+    const agenda = $('#calendar-agenda', this.window);
+    if (!grid || !agenda) return;
+
+    const first = new Date(this._cursor.getFullYear(), this._cursor.getMonth(), 1);
+    const start = new Date(first);
+    start.setDate(1 - first.getDay());
+
+    const today = new Date();
+    const eventMap = this._events.reduce((acc, item) => {
+      (acc[item.day] ||= []).push(item);
+      return acc;
+    }, {});
+
+    const cells = [];
+    for (let i = 0; i < 42; i++) {
+      const day = new Date(start);
+      day.setDate(start.getDate() + i);
+      const key = dateKey(day);
+      const events = eventMap[key] || [];
+      cells.push(`
+        <button class="calendar-day ${sameMonth(day, this._cursor) ? '' : 'is-outside'} ${sameDay(day, today) ? 'is-today' : ''} ${sameDay(day, this._selected) ? 'is-selected' : ''}" data-day="${key}">
+          <span class="calendar-day-num">${day.getDate()}</span>
+          <span class="calendar-day-dots">${events.slice(0, 3).map(item => `<i class="calendar-dot is-${item.status}"></i>`).join('')}</span>
+        </button>`);
+    }
+    grid.innerHTML = cells.join('');
+
+    $$('.calendar-day', grid).forEach(btn => {
+      btn.addEventListener('click', () => {
+        const chosen = parseDateOnly(btn.dataset.day);
+        if (!chosen) return;
+        this._selected = chosen;
+        if (!sameMonth(chosen, this._cursor)) {
+          this._cursor = new Date(chosen.getFullYear(), chosen.getMonth(), 1);
+        }
+        this._render();
+      });
+    });
+
+    const selectedEvents = eventMap[dateKey(this._selected)] || [];
+    agenda.innerHTML = `
+      <div class="calendar-agenda-head">
+        <div class="calendar-agenda-title">${formatFullDate(this._selected)}</div>
+        <div class="calendar-agenda-count">${selectedEvents.length ? `${selectedEvents.length} 条安排` : '暂无安排'}</div>
+      </div>
+      <div class="calendar-agenda-list">
+        ${selectedEvents.length ? selectedEvents.map(item => `
+          <div class="calendar-event-card">
+            <div class="calendar-event-type">${item.type}</div>
+            <div class="calendar-event-title">${item.title}</div>
+            <div class="calendar-event-meta">${item.time || '全天'} · ${item.status}</div>
+          </div>
+        `).join('') : '<div class="calendar-empty">这一天没有来自 mock_data 的行程。</div>'}
+      </div>`;
+  }
+}
+
+// ── 15. SETTINGS APP ──────────────────────────────────────────────
+class SettingsApp extends BaseApp {
+  constructor(os) {
+    super(os, { id:'settings', name:'设置', icon:'⚙️', iconBg:'#636366', headerBg:'#f2f2f7' });
+    this._soul = null;
+  }
+
+  buildHTML() {
+    return `<div class="app-window-inner settings-app" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
+      <div class="app-header settings-header">
+        <div class="app-title">设置</div>
+      </div>
+      <div id="settings-body" class="app-content">
+        <div class="state-loading"><div class="spinner"></div></div>
+      </div>
+    </div>`;
+  }
+
+  async onOpen() {
+    await this._load(true);
+    this._render();
+    this.startPoll(async () => {
+      await this._load(true);
+      this._render();
+    });
+  }
+
+  onClose() { this.stopPoll(); }
+
+  async _load(force = false) {
+    this._soul = await this.os.ds.get('soul', force);
+  }
+
+  _render() {
+    const body = $('#settings-body', this.window);
+    if (!body) return;
+    if (!this._soul) {
+      body.innerHTML = '<div class="state-error">无法读取用户信息</div>';
+      return;
+    }
+
+    const prefs = this._soul['偏好'] || [];
+    const habits = this._soul['习惯'] || [];
+    const name = this._soul['姓名'] || '当前用户';
+    body.innerHTML = `
+      <div class="settings-pane">
+        <div class="settings-hero">
+          <div class="settings-avatar">${avatarLetter(name)}</div>
+          <div>
+            <div class="settings-name">${name}</div>
+            <div class="settings-sub">${this._soul['社会身份'] || '未填写身份信息'}</div>
+          </div>
+        </div>
+
+        <div class="settings-group">
+          <div class="settings-group-title">用户信息</div>
+          <div class="settings-card">
+            <div class="settings-row">
+              <span>居住地</span>
+              <strong>${this._soul['居住地'] || '未填写'}</strong>
+            </div>
+            <div class="settings-divider"></div>
+            <div class="settings-row is-multiline">
+              <span>性格</span>
+              <strong>${this._soul['性格'] || '未填写'}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-group">
+          <div class="settings-group-title">偏好</div>
+          <div class="settings-card settings-tags">
+            ${prefs.map(item => `<span class="settings-tag">${item}</span>`).join('') || '<span class="settings-empty">暂无偏好数据</span>'}
+          </div>
+        </div>
+
+        <div class="settings-group">
+          <div class="settings-group-title">习惯</div>
+          <div class="settings-card settings-list">
+            ${habits.map(item => `<div class="settings-list-item">${item}</div>`).join('') || '<div class="settings-empty">暂无习惯数据</div>'}
+          </div>
+        </div>
+
+        <div class="settings-group">
+          <div class="settings-group-title">关于本机</div>
+          <div class="settings-card">
+            <div class="settings-row"><span>设备</span><strong>ORCA OS View</strong></div>
+            <div class="settings-divider"></div>
+            <div class="settings-row"><span>前端访问</span><strong>Web / Browser</strong></div>
+            <div class="settings-divider"></div>
+            <div class="settings-row"><span>数据来源</span><strong>mock_data/*</strong></div>
+          </div>
+        </div>
+      </div>`;
+  }
+}
+
+// ── 16. PLACEHOLDER APP ───────────────────────────────────────────
+class PlaceholderApp extends BaseApp {
+  constructor(os, opts) {
+    super(os, opts);
+  }
+
+  buildHTML() {
+    return `<div class="app-window-inner placeholder-app" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
+      <div class="app-header" style="background:#f2f2f7;">
+        <div class="app-title">${this.icon}&nbsp;${this.name}</div>
+      </div>
+      <div class="placeholder-body">
+        <div class="placeholder-icon">${this.icon}</div>
+        <div class="placeholder-text">${this.name}</div>
+        <div class="placeholder-sub">该应用暂未接入 ORCA。<br>数据与功能持续接入中。</div>
+      </div>
+    </div>`;
+  }
+}
+
+// ── 15. 小艺 ASSISTANT ────────────────────────────────────────────
+class XiaoYiAssistant {
+  constructor(os) {
+    this.os        = os;
+    this.screen    = $('#screen');
+    this.bubble    = $('#xiaoyi-bubble');
+    this.panel     = $('#xiaoyi-panel');
+    this.msgWrap   = $('#xiaoyi-messages');
+    this.input     = $('#xiaoyi-input');
+    this.sendBtn   = $('#xiaoyi-send');
+    this.closeBtn  = $('#xiaoyi-close');
+    this.mask      = $('#xiaoyi-mask');
+    this._open     = false;
+    this._dragging = false;
+    this._dy       = 0;
+    this._startY   = 0;
+    this._sheetMin = 0.54;
+    this._sheetDefault = 0.70;
+    this._sheetExpanded = 0.90;
+    this._sheetRatio = this._sheetDefault;
+  }
+
+  init() {
+    // NOTE: click is handled by mouseup in _makeBubbleDraggable to avoid double-toggle
+    this.closeBtn?.addEventListener('click', () => this.close());
+    this.mask?.addEventListener('click', () => this.close());
+
+    // send on button or Enter
+    this.sendBtn?.addEventListener('click', () => this._send());
+    this.input?.addEventListener('keydown', e => { if (e.key === 'Enter') this._send(); });
+
+    // drag to resize / close panel
+    const dragBar = $('#xiaoyi-drag-bar');
+    if (dragBar) {
+      let sy = 0;
+      let startRatio = this._sheetDefault;
+      let dragging = false;
+
+      dragBar.addEventListener('mousedown', e => {
+        if (!this._open) return;
+        sy = e.clientY;
+        startRatio = this._sheetRatio;
+        dragging = true;
+        this._setSheetRatio(this._sheetRatio, true);
+        e.preventDefault();
+      });
+
+      window.addEventListener('mousemove', e => {
+        if (!dragging) return;
+        const body = $('#xiaoyi-body');
+        const metrics = this._screenMetrics();
+        if (!body || !metrics) return;
+        const delta = e.clientY - sy;
+        const nextRatio = clamp(startRatio - delta / metrics.height, this._sheetMin, this._sheetExpanded);
+        this._sheetRatio = nextRatio;
+        body.style.height = `${(nextRatio * 100).toFixed(1)}%`;
+        if (delta > 0 && startRatio <= this._sheetDefault + 0.02) {
+          const shift = Math.max(0, delta - 10);
+          body.style.transform = `translateY(${shift}px)`;
+          body.style.opacity = `${clamp(1 - shift / 380, 0.72, 1)}`;
+        } else {
+          body.style.transform = '';
+          body.style.opacity = '';
+        }
+      });
+
+      window.addEventListener('mouseup', e => {
+        if (!dragging) return;
+        dragging = false;
+        const body = $('#xiaoyi-body');
+        const delta = e.clientY - sy;
+        if (body) body.style.transition = '';
+
+        if (delta > 120 && startRatio <= this._sheetDefault + 0.02) {
+          this.close();
+          return;
+        }
+
+        if (delta < -60 || this._sheetRatio > (this._sheetDefault + this._sheetExpanded) / 2) {
+          this._setSheetRatio(this._sheetExpanded);
+          return;
+        }
+
+        if (delta > 36 && startRatio > this._sheetDefault + 0.04) {
+          this._setSheetRatio(this._sheetDefault);
+          return;
+        }
+
+        const nearExpanded = Math.abs(this._sheetRatio - this._sheetExpanded) < Math.abs(this._sheetRatio - this._sheetDefault);
+        this._setSheetRatio(nearExpanded ? this._sheetExpanded : this._sheetDefault);
+      });
+    }
+
+    // draggable bubble (stays on screen edges)
+    this._makeBubbleDraggable();
+    this.snapToEdge(true);
+  }
+
+  toggle() { this._open ? this.close() : this.open(); }
+
+  open() {
+    this._open = true;
+    this.panel.classList.remove('hidden');
+    const body = $('#xiaoyi-body');
+    if (body) {
+      body.style.transform = '';
+      body.style.opacity = '';
+    }
+    this._setSheetRatio(this._sheetRatio || this._sheetDefault);
+    this.input?.focus();
+  }
+
+  close() {
+    this._open = false;
+    const body = $('#xiaoyi-body');
+    this._sheetRatio = this._sheetDefault;
+    if (body) {
+      body.style.transform = '';
+      body.style.opacity = '';
+      body.style.height = `${(this._sheetDefault * 100).toFixed(1)}%`;
+    }
+    this.panel.classList.add('hidden');
+  }
+
+  // ── AIOS HOOK ──────────────────────────────────────────────────
+  // Replace this method to wire into aios_demo.py / aios_listener.py
+  async _send() {
+    const msg = this.input?.value?.trim();
+    if (!msg) return;
+    if (this.input) this.input.value = '';
+    this._appendMsg(msg, 'user');
+    this._appendMsg('…', 'typing');
+
+    // Interface hook: POST to /api/assistant
+    // Future: stream responses from Soul Agent → Workforce
+    const data = await this.os.ds.post('assistant', { message: msg, mode: 'active' });
+
+    // remove typing indicator
+    const typing = this.msgWrap?.querySelector('.xm-typing');
+    if (typing) typing.remove();
+
+    this._appendMsg(data?.reply || '（接口未接入）', 'ai');
+  }
+
+  _appendMsg(text, type) {
+    if (!this.msgWrap) return;
+    const div = el('div', `xm xm-${type==='user'?'user':type==='typing'?'typing':'ai'}`);
+    div.innerHTML = `<div class="xm-bubble">${text}</div>`;
+    this.msgWrap.appendChild(div);
+    this.msgWrap.scrollTop = this.msgWrap.scrollHeight;
+  }
+
+  _setSheetRatio(ratio, immediate = false) {
+    const body = $('#xiaoyi-body');
+    this._sheetRatio = clamp(ratio, this._sheetMin, this._sheetExpanded);
+    if (!body) return;
+    body.style.transition = immediate ? 'none' : '';
+    body.style.height = `${(this._sheetRatio * 100).toFixed(1)}%`;
+    body.style.transform = '';
+    body.style.opacity = '';
+    if (immediate) {
+      requestAnimationFrame(() => {
+        if (body) body.style.transition = '';
+      });
+    }
+  }
+
+  // External: called by AIOS when a response streams in
+  receiveMessage(text) {
+    this.open();
+    this._appendMsg(text, 'ai');
+  }
+
+  _screenMetrics() {
+    const screen = this.screen || $('#screen');
+    if (!screen) return null;
+    const rect = screen.getBoundingClientRect();
+    const width = screen.clientWidth || screen.offsetWidth || rect.width;
+    const height = screen.clientHeight || screen.offsetHeight || rect.height;
+    return {
+      screen,
+      rect,
+      width,
+      height,
+      scaleX: width ? rect.width / width : 1,
+      scaleY: height ? rect.height / height : 1,
+    };
+  }
+
+  snapToEdge(force = false) {
+    const metrics = this._screenMetrics();
+    if (!metrics || !this.bubble) return;
+
+    const bw = this.bubble.offsetWidth;
+    const bh = this.bubble.offsetHeight;
+    const margin = 10;
+    const topLimit = 90;
+    const bottomLimit = 132;
+
+    let left = this.bubble.offsetLeft;
+    let top = this.bubble.offsetTop;
+    if (force && !this.bubble.style.left && !this.bubble.style.top) {
+      left = metrics.width - bw - margin;
+      top = clamp(metrics.height * 0.42, topLimit, metrics.height - bh - bottomLimit);
+    }
+
+    left = left + bw / 2 < metrics.width / 2 ? margin : metrics.width - bw - margin;
+    top = clamp(top, topLimit, metrics.height - bh - bottomLimit);
+
+    this.bubble.style.right = 'unset';
+    this.bubble.style.bottom = 'unset';
+    this.bubble.style.left = `${left}px`;
+    this.bubble.style.top = `${top}px`;
+  }
+
+  _makeBubbleDraggable() {
+    let sx, sy, ox, oy, scaleX = 1, scaleY = 1, dragging = false;
+
+    this.bubble.addEventListener('mousedown', e => {
+      const metrics = this._screenMetrics();
+      if (!metrics) return;
+      sx = e.clientX; sy = e.clientY;
+      ox = this.bubble.offsetLeft;
+      oy = this.bubble.offsetTop;
+      scaleX = metrics.scaleX || 1;
+      scaleY = metrics.scaleY || 1;
+      this.bubble.style.transition = 'none';
+      dragging = true;
+      e.preventDefault();
+    });
+
+    window.addEventListener('mousemove', e => {
+      if (!dragging) return;
+      const metrics = this._screenMetrics();
+      if (!metrics) return;
+      const dx = (e.clientX - sx) / scaleX;
+      const dy = (e.clientY - sy) / scaleY;
+      this._dy = dy;
+      const bw = this.bubble.offsetWidth;
+      const bh = this.bubble.offsetHeight;
+      let nx = ox + dx;
+      let ny = oy + dy;
+      nx = Math.max(0, Math.min(metrics.width - bw, nx));
+      ny = Math.max(0, Math.min(metrics.height - bh, ny));
+      this.bubble.style.right  = 'unset';
+      this.bubble.style.bottom = 'unset';
+      this.bubble.style.left   = nx + 'px';
+      this.bubble.style.top    = ny + 'px';
+    });
+
+    window.addEventListener('mouseup', e => {
+      if (!dragging) return;
+      dragging = false;
+      this.bubble.style.transition = '';
+      this.snapToEdge();
+
+      // if barely moved → treat as tap (use mouseup position for final delta)
+      const totalDx = Math.abs((e.clientX - sx) / scaleX);
+      const totalDy = Math.abs((e.clientY - sy) / scaleY);
+      if (totalDx < 8 && totalDy < 8) {
+        this.toggle();
+      }
+    });
+  }
+}
+
+// ── 17. CONTROL CENTER ────────────────────────────────────────────
+class ControlCenter {
+  constructor(os) {
+    this.os = os;
+    this.el = $('#control-center');
+    this.panel = $('#control-center-panel');
+    this.mask = $('#control-center-mask');
+    this.zone = $('#control-grab-zone');
+    this.screen = $('#screen');
+    this._open = false;
+    this._toggles = { wifi: true, bluetooth: true, airplane: false, focus: false };
+  }
+
+  init() {
+    this.mask?.addEventListener('click', () => this.close());
+    this._bindGesture();
+    this._bindControls();
+    this._updateClock();
+    this._applyBrightness();
+    setInterval(() => this._updateClock(), 15000);
+  }
+
+  isOpen() { return this._open; }
+
+  open() {
+    this._open = true;
+    this.el.classList.remove('hidden');
+    requestAnimationFrame(() => this.el.classList.add('is-open'));
+    this._updateClock();
+  }
+
+  close() {
+    this._open = false;
+    this.el.classList.remove('is-open');
+    this.el.classList.add('hidden');
+  }
+
+  _bindGesture() {
+    let startX = 0, startY = 0, dragging = false, openedByDrag = false;
+
+    this.zone?.addEventListener('mousedown', (e) => {
+      startX = e.clientX;
+      startY = e.clientY;
+      dragging = true;
+      openedByDrag = false;
+      e.preventDefault();
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if (!dragging || this._open) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      if (dx < -26 && dy > 28 && dy > Math.abs(dx) * 0.65) {
+        dragging = false;
+        openedByDrag = true;
+        this.open();
+      }
+    });
+
+    window.addEventListener('mouseup', (e) => {
+      if (!dragging) return;
+      dragging = false;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      if ((dx < -18 && dy > 24 && dy > Math.abs(dx) * 0.65) || (Math.abs(dx) < 6 && Math.abs(dy) < 6 && !openedByDrag)) {
+        this.open();
+      }
+    });
+  }
+
+  _bindControls() {
+    $$('.cc-toggle', this.el).forEach(btn => {
+      btn.addEventListener('click', () => {
+        const key = btn.dataset.toggle;
+        const next = !this._toggles[key];
+        this._toggles[key] = next;
+        if (key === 'airplane' && next) {
+          this._toggles.wifi = false;
+          this._toggles.bluetooth = false;
+        } else if ((key === 'wifi' || key === 'bluetooth') && next) {
+          this._toggles.airplane = false;
+        }
+        this._renderToggles();
+      });
+    });
+
+    $('#cc-brightness', this.el)?.addEventListener('input', () => this._applyBrightness());
+  }
+
+  _renderToggles() {
+    $$('.cc-toggle', this.el).forEach(btn => {
+      btn.classList.toggle('is-on', !!this._toggles[btn.dataset.toggle]);
+    });
+  }
+
+  _applyBrightness() {
+    const val = Number($('#cc-brightness', this.el)?.value || 78);
+    if (this.screen) this.screen.style.filter = `brightness(${val / 100})`;
+  }
+
+  _updateClock() {
+    const now = new Date();
+    $('#cc-date', this.el).textContent = now.toLocaleDateString('zh-CN', {
+      month: 'long',
+      day: 'numeric',
+      weekday: 'long',
+    });
+    $('#cc-time', this.el).textContent = now.toLocaleTimeString('zh-CN', {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+    this._renderToggles();
+  }
+}
+
+// ── 18. PHONE OS (MAIN CONTROLLER) ────────────────────────────────
+class ORCAOS {
+  constructor() {
+    this.ds            = new DataService();
+    this.notifMgr      = null;
+    this.switcher      = null;
+    this.assistant     = null;
+    this.controlCenter = null;
+    this._apps         = {};
+    this._stack        = [];
+    this._current      = null;
+    this.state         = 'home';
+    this._homeLayout   = null;
+    this._homePage     = 0;
+    this._editMode     = false;
+    this._suppressIconClickUntil = 0;
+    this._dragEdgeTimer = null;
+    this._dragEdgeDir = 0;
+    this._dragState = null;
+  }
+
+  getApp(id) { return this._apps[id]; }
+  getOpenStack() { return [...this._stack]; }
+  buildAppPreviewNode(app) {
+    const sourceHTML = app?._snapshotHTML || app?.window?.firstElementChild?.outerHTML || '';
+    return previewNodeFromHTML(sourceHTML);
+  }
+
+  _captureAppSnapshot(id) {
+    const app = this._apps[id];
+    const content = app?.window?.firstElementChild;
+    if (!app || !content) return;
+    const clone = content.cloneNode(true);
+    const sourceFields = $$('input, textarea, select', content);
+    const cloneFields = $$('input, textarea, select', clone);
+
+    sourceFields.forEach((field, index) => {
+      const mirror = cloneFields[index];
+      if (!mirror) return;
+      if (field instanceof HTMLTextAreaElement) {
+        mirror.value = field.value;
+        mirror.textContent = field.value;
+      } else if (field instanceof HTMLSelectElement) {
+        mirror.value = field.value;
+        [...mirror.options].forEach((option) => {
+          option.selected = option.value === field.value;
+        });
+      } else {
+        mirror.value = field.value;
+        mirror.setAttribute('value', field.value);
+        if (field.type === 'checkbox' || field.type === 'radio') {
+          mirror.checked = field.checked;
+          if (field.checked) mirror.setAttribute('checked', 'checked');
+          else mirror.removeAttribute('checked');
+        }
+      }
+    });
+
+    app._snapshotHTML = clone.outerHTML;
+  }
+
+  async init() {
+    this._drawWallpaper();
+    this._startClock();
+    this.notifMgr = new NotificationManager(this);
+    this.switcher = new AppSwitcher(this);
+    this.assistant = new XiaoYiAssistant(this);
+    this.controlCenter = new ControlCenter(this);
+    this.assistant.init();
+    this.controlCenter.init();
+
+    this._registerApps();
+    await this._loadIconAssets(true);
+    this._loadHomeLayout();
+    this._renderHomeScreen();
+    this._setupHomeBar();
+    this._setupHomeGestures();
+    this._startNotifPolling();
+    this._startIconPolling();
+
+    window.addEventListener('resize', () => this.onResize());
+    this._setupFullscreen();
+
+    window.ORCA = {
+      notify:        (n)  => this.notifMgr.show(n),
+      openApp:       (id) => this.openApp(id, null),
+      goHome:        ()   => this.goHome(),
+      xiaoyi:        this.assistant,
+      controlCenter: this.controlCenter,
+    };
+
+    console.log('%c✅ ORCA OS ready', 'color:#34C759;font-weight:bold;font-size:14px;');
+  }
+
+  _setupFullscreen() {
+    const enterBtn = $('#fs-enter-btn');
+    const exitPill = $('#fs-exit-pill');
+    const root     = document.documentElement;
+
+    // Scale the phone shell to fill the (full-screen) viewport while keeping proportions.
+    const updateScale = () => {
+      const scaleW = window.innerWidth  / 393;
+      const scaleH = window.innerHeight / 852;
+      root.style.setProperty('--fs-scale', Math.min(scaleW, scaleH) * 0.97);
+    };
+
+    const isFS = () => !!document.fullscreenElement;
+
+    // React to browser fullscreen state changes (including user pressing Escape)
+    document.addEventListener('fullscreenchange', () => {
+      if (isFS()) {
+        updateScale();                         // set scale before applying class
+        document.body.classList.add('is-fullscreen');
+        if (exitPill) {
+          exitPill.getBoundingClientRect();    // force reflow for animation
+          exitPill.classList.add('is-visible');
+        }
+      } else {
+        exitPill?.classList.remove('is-visible');
+        setTimeout(() => {
+          document.body.classList.remove('is-fullscreen');
+          root.style.removeProperty('--fs-scale');
+        }, 280);
+      }
+    });
+
+    // iOS Safari doesn't support requestFullscreen — show "Add to Home Screen" tip instead
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+
+    enterBtn?.addEventListener('click', () => {
+      if (isIOS || !document.documentElement.requestFullscreen) {
+        this.notifMgr?.show({
+          app: 'system',
+          title: '全屏提示',
+          message: '点击底部分享按钮 → "添加到主屏幕"，即可全屏打开',
+        });
+        return;
+      }
+      root.requestFullscreen().catch(err => {
+        console.warn('[FS] requestFullscreen failed:', err.message);
+      });
+    });
+
+    // Exit: release browser fullscreen (Escape also works natively)
+    exitPill?.addEventListener('click', () => {
+      if (isFS()) document.exitFullscreen();
+    });
+
+    // Re-scale if window is resized while in fullscreen (e.g. multi-monitor)
+    window.addEventListener('resize', () => { if (isFS()) updateScale(); });
+  }
+
+  _registerApps() {
+    const all = [
+      new SearchApp(this),
+      new ContactsApp(this),
+      new DocumentsApp(this),
+      new PhotosApp(this),
+      new XiaoHongShuApp(this),
+      new NotesApp(this),
+      new XiechengApp(this),
+      new CalendarApp(this),
+      new SettingsApp(this),
+      new PlaceholderApp(this, { id:'weibo', name:'微博', icon:'🐦', iconBg:'#E6162D' }),
+    ];
+
+    for (const app of all) {
+      this._apps[app.id] = app;
+      const win = el('div', 'app-window');
+      win.id = 'app-win-' + app.id;
+      win.innerHTML = app.buildHTML();
+      $('#app-layer').appendChild(win);
+      app.window = win;
+    }
+  }
+
+  _defaultHomeLayout() {
+    return {
+      pages: [
+        // Page 1 — system built-in apps
+        ['photos', 'notes', 'calendar', 'settings'],
+        // Page 2 — social / travel
+        ['xiaohongshu', 'xiecheng'],
+        // Page 3 — social media
+        ['weibo'],
+      ],
+      // Fixed dock: browser · contacts · documents
+      dock: ['search', 'contacts', 'documents'],
+    };
+  }
+
+  _loadHomeLayout() {
+    let parsed = null;
+    try {
+      parsed = JSON.parse(localStorage.getItem(HOME_LAYOUT_KEY) || 'null');
+    } catch {}
+    this._homeLayout = this._normalizeHomeLayout(parsed || this._defaultHomeLayout());
+  }
+
+  _normalizeHomeLayout(layout) {
+    const fallback = this._defaultHomeLayout();
+    const pool = Object.keys(this._apps);
+    const dockSource = Array.isArray(layout.dock) ? layout.dock : fallback.dock;
+    const seen = new Set();
+    const dock = [];
+
+    for (const id of dockSource) {
+      if (!this._apps[id] || seen.has(id) || dock.length >= 4) continue;
+      dock.push(id);
+      seen.add(id);
+    }
+
+    const pagesSource = Array.isArray(layout.pages) ? layout.pages : fallback.pages;
+    const pages = pagesSource
+      .map(page => (Array.isArray(page) ? page : []).filter(id => {
+        if (!this._apps[id] || seen.has(id)) return false;
+        seen.add(id);
+        return true;
+      }))
+      .filter(page => page.length);
+
+    if (!pages.length) pages.push([]);
+
+    for (const id of pool) {
+      if (!this._apps[id] || seen.has(id)) continue;
+      pages[pages.length - 1].push(id);
+      seen.add(id);
+    }
+
+    return { pages, dock };
+  }
+
+  _saveHomeLayout() {
+    localStorage.setItem(HOME_LAYOUT_KEY, JSON.stringify(this._homeLayout));
+  }
+
+  _compactHomePages(pages) {
+    const compacted = pages.filter(page => page.length);
+    return compacted.length ? compacted : [[]];
+  }
+
+  _findHomePlacement(appId, layout = this._homeLayout) {
+    const dockIndex = layout.dock.indexOf(appId);
+    if (dockIndex >= 0) {
+      return { location: 'dock', index: dockIndex };
+    }
+
+    for (let pageIndex = 0; pageIndex < layout.pages.length; pageIndex++) {
+      const index = layout.pages[pageIndex].indexOf(appId);
+      if (index >= 0) {
+        return { location: 'page', pageIndex, index };
+      }
+    }
+
+    return null;
+  }
+
+  _cleanupHomeLayout(preferredPage = this._homePage) {
+    const pages = this._compactHomePages(this._homeLayout.pages.map(page => [...page]));
+    this._homeLayout.pages = pages;
+    this._homePage = clamp(preferredPage, 0, Math.max(0, pages.length - 1));
+    this._saveHomeLayout();
+  }
+
+  async _loadIconAssets(force = false) {
+    const aliases = {
+      search: ['search'],
+      contacts: ['contacts', 'contactors'],
+      documents: ['documents', 'document'],
+      photos: ['photos'],
+      xiaohongshu: ['xiaohongshu', 'xhs'],
+      notes: ['notes'],
+      xiecheng: ['xiecheng', 'ctrip'],
+      calendar: ['calendar'],
+      settings: ['settings', 'setting'],
+      weibo: ['weibo'],
+    };
+    const data = await this.ds.get('app-icons', force);
+    const iconMap = data?.icons || {};
+    let changed = false;
+
+    for (const app of Object.values(this._apps)) {
+      const next = (aliases[app.id] || [app.id]).map(key => iconMap[key]).find(Boolean) || null;
+      if (app.iconUrl !== next) {
+        app.iconUrl = next;
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  _startIconPolling() {
+    setInterval(async () => {
+      const changed = await this._loadIconAssets(true);
+      if (changed && !this._editMode) this._renderHomeScreen();
+    }, CFG.POLL_ICONS);
+  }
+
+  _renderHomeScreen() {
+    document.body.classList.toggle('homescreen-editing', this._editMode);
+    document.body.classList.toggle('homescreen-dragging', !!this._dragState);
+    const pagesEl = $('#home-pages');
+    const dockEl = $('#dock-icons');
+    const dotsEl = $('#page-dots');
+    if (!pagesEl || !dockEl || !dotsEl) return;
+
+    pagesEl.innerHTML = '';
+    this._homeLayout.pages.forEach((ids, pageIndex) => {
+      const page = el('div', 'home-page');
+      page.dataset.page = pageIndex;
+      const grid = el('div', 'app-grid');
+      ids.forEach((id, index) => {
+        const app = this._apps[id];
+        if (app) grid.appendChild(this._iconEl(app, { location: 'page', pageIndex, index }));
+      });
+      page.appendChild(grid);
+      pagesEl.appendChild(page);
+    });
+
+    dockEl.innerHTML = '';
+    this._homeLayout.dock.forEach((id, index) => {
+      const app = this._apps[id];
+      if (app) dockEl.appendChild(this._iconEl(app, { location: 'dock', index }));
+    });
+
+    dotsEl.innerHTML = this._homeLayout.pages.map((_, index) => `
+      <button class="page-dot ${index === this._homePage ? 'is-active' : ''}" data-page="${index}" aria-label="第 ${index + 1} 页"></button>
+    `).join('');
+    $$('.page-dot', dotsEl).forEach(btn => {
+      btn.addEventListener('click', () => this._setHomePage(Number(btn.dataset.page)));
+    });
+
+    this._setHomePage(this._homePage, false);
+  }
+
+  _captureHomeIconLayout() {
+    const layout = new Map();
+    $$('.app-icon-wrap[data-location]').forEach((item) => {
+      const rect = item.getBoundingClientRect();
+      layout.set(item.dataset.appId, {
+        left: rect.left,
+        top: rect.top,
+        location: item.dataset.location || 'page',
+        page: Number(item.dataset.page || 0),
+        index: Number(item.dataset.index || 0),
+      });
+    });
+    return layout;
+  }
+
+  _homeReflowDistance(prev, next, focus = {}) {
+    const focusLocation = focus.location || 'page';
+    const focusPage = focus.pageIndex ?? focus.page ?? this._homePage;
+    const focusIndex = focus.index ?? 0;
+    const project = (entry) => {
+      if (!entry) return 6;
+      if (entry.location === 'dock') {
+        return focusLocation === 'dock' ? Math.abs((entry.index ?? 0) - focusIndex) : 4 + (entry.index ?? 0);
+      }
+      const pageDistance = Math.abs((entry.page ?? focusPage) - focusPage);
+      if (focusLocation === 'dock') {
+        return 3 + pageDistance * 4 + (entry.index ?? 0);
+      }
+      if (!pageDistance) return Math.abs((entry.index ?? focusIndex) - focusIndex);
+      return pageDistance * 5 + (entry.index ?? 0);
+    };
+    return Math.min(project(prev), project(next));
+  }
+
+  _animateHomeReflow(prevLayout, focus = {}) {
+    if (!prevLayout?.size) return;
+    const nextLayout = this._captureHomeIconLayout();
+    const draggedId = focus.draggedAppId;
+
+    nextLayout.forEach((next, appId) => {
+      if (appId === draggedId) return;
+      const prev = prevLayout.get(appId);
+      if (!prev) return;
+
+      const dx = prev.left - next.left;
+      const dy = prev.top - next.top;
+      if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+
+      const node = next.location === 'dock'
+        ? $(`.app-icon-wrap[data-app-id="${appId}"][data-location="dock"][data-index="${next.index}"]`)
+        : $(`.app-icon-wrap[data-app-id="${appId}"][data-location="page"][data-page="${next.page}"][data-index="${next.index}"]`);
+      const motionNode = $('.app-icon-stack', node) || node;
+      if (!motionNode?.animate) return;
+
+      const distance = this._homeReflowDistance(prev, next, focus);
+      const delay = Math.min(140, distance * 22);
+      motionNode.animate([
+        { transform: `translate(${dx}px, ${dy}px) scale(1.015)` },
+        { transform: 'translate(0, 0) scale(1)' },
+      ], {
+        duration: 320,
+        delay,
+        easing: 'cubic-bezier(.22, 1, .36, 1)',
+      });
+    });
+  }
+
+  _iconEl(app, meta = {}) {
+    const isDragging = this._dragState?.appId === app.id;
+    const wrap = el('div', `app-icon-wrap ${this._editMode ? 'is-editing' : ''} ${isDragging ? 'is-drag-source' : ''}`);
+    const iconClass = `app-icon ${app.iconUrl ? 'has-asset' : ''}`;
+    const iconStyle = app.iconUrl ? '' : ` style="background:${app.iconBg};"`;
+    wrap.dataset.appId = app.id;
+    wrap.dataset.location = meta.location || 'page';
+    if (meta.pageIndex !== undefined) wrap.dataset.page = meta.pageIndex;
+    if (meta.index !== undefined) wrap.dataset.index = meta.index;
+    wrap.innerHTML = `
+      <div class="app-icon-stack">
+        <div class="${iconClass}"${iconStyle}>${renderAppIconContent(app)}</div>
+        <div class="app-label">${app.name}</div>
+      </div>`;
+
+    wrap.addEventListener('click', () => {
+      if (Date.now() < this._suppressIconClickUntil || this._editMode || this.state !== 'home') return;
+      this.openApp(app.id, $('.app-icon', wrap));
+    });
+
+    if (meta.location === 'page' || meta.location === 'dock') {
+      wrap.addEventListener('mousedown', (e) => this._handleHomeIconMouseDown(e, wrap, app, meta));
+    }
+    return wrap;
+  }
+
+  _handleHomeIconMouseDown(e, wrap, app, meta) {
+    if (e.button !== 0 || this.state !== 'home' || this.controlCenter.isOpen()) return;
+
+    if (this._editMode) {
+      this._startHomeIconDrag(e, wrap, app, meta);
+      return;
+    }
+
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const timer = setTimeout(() => {
+      this._editMode = true;
+      this._suppressIconClickUntil = Date.now() + 250;
+      window.removeEventListener('mousemove', moveCancel);
+      window.removeEventListener('mouseup', cancel);
+      this._startHomeIconDrag({ clientX: startX, clientY: startY }, wrap, app, meta);
+    }, 420);
+
+    const cancel = () => {
+      clearTimeout(timer);
+      window.removeEventListener('mousemove', moveCancel);
+      window.removeEventListener('mouseup', cancel);
+    };
+    const moveCancel = (evt) => {
+      if (Math.abs(evt.clientX - startX) > 8 || Math.abs(evt.clientY - startY) > 8) cancel();
+    };
+
+    window.addEventListener('mousemove', moveCancel);
+    window.addEventListener('mouseup', cancel, { once: true });
+  }
+
+  _startHomeIconDrag(e, wrap, app, meta) {
+    const rect = wrap.getBoundingClientRect();
+    const ghost = wrap.cloneNode(true);
+    ghost.classList.add('app-icon-ghost');
+    ghost.style.width = `${rect.width}px`;
+    ghost.style.height = `${rect.height}px`;
+    document.body.appendChild(ghost);
+
+    const startPlacement = {
+      location: meta.location || 'page',
+      pageIndex: meta.pageIndex ?? this._homePage,
+      index: meta.index ?? 0,
+    };
+    this._dragState = {
+      appId: app.id,
+      currentPlacement: startPlacement,
+    };
+    this._editMode = true;
+    this._suppressIconClickUntil = Date.now() + 300;
+    this._renderHomeScreen();
+
+    const moveGhost = (clientX, clientY) => {
+      ghost.style.left = `${clientX - rect.width / 2}px`;
+      ghost.style.top = `${clientY - rect.height / 2}px`;
+    };
+    moveGhost(e.clientX, e.clientY);
+
+    const onMove = (evt) => {
+      moveGhost(evt.clientX, evt.clientY);
+      this._maybeShiftHomePage(evt.clientX);
+      const nextPlacement = this._detectHomeDropTarget(evt.clientX, evt.clientY, app.id);
+      if (!this._dragState) return;
+      const current = this._dragState.currentPlacement;
+      const sameTarget = current.location === nextPlacement.location
+        && current.index === nextPlacement.index
+        && (current.location === 'dock' || current.pageIndex === nextPlacement.pageIndex);
+      if (!sameTarget) {
+        const prevLayout = this._captureHomeIconLayout();
+        const moved = this._moveHomeItem(current, nextPlacement, app.id);
+        this._dragState.currentPlacement = moved;
+        this._renderHomeScreen();
+        this._animateHomeReflow(prevLayout, {
+          ...moved,
+          draggedAppId: app.id,
+        });
+      }
+    };
+
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      clearTimeout(this._dragEdgeTimer);
+      this._dragEdgeTimer = null;
+      this._dragEdgeDir = 0;
+      ghost.remove();
+      const preferredPage = this._dragState?.currentPlacement?.pageIndex ?? this._homePage;
+      this._dragState = null;
+      this._cleanupHomeLayout(preferredPage);
+      this._renderHomeScreen();
+    };
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp, { once: true });
+  }
+
+  _maybeShiftHomePage(clientX) {
+    const screenRect = $('#screen').getBoundingClientRect();
+    const edge = 42;
+    let dir = 0;
+    if (clientX < screenRect.left + edge) dir = -1;
+    if (clientX > screenRect.right - edge) dir = 1;
+
+    if (!dir) {
+      clearTimeout(this._dragEdgeTimer);
+      this._dragEdgeTimer = null;
+      this._dragEdgeDir = 0;
+      return;
+    }
+
+    if (this._dragEdgeTimer && this._dragEdgeDir === dir) return;
+    clearTimeout(this._dragEdgeTimer);
+    this._dragEdgeDir = dir;
+    this._dragEdgeTimer = setTimeout(() => {
+      if (dir > 0 && this._dragState && this._homePage >= this._homeLayout.pages.length - 1) {
+        this._homeLayout.pages.push([]);
+        this._saveHomeLayout();
+        this._renderHomeScreen();
+      }
+      this._setHomePage(this._homePage + dir);
+      this._dragEdgeTimer = null;
+    }, 280);
+  }
+
+  _computeDropIndex(pageIndex, clientX, clientY, appId) {
+    const page = $(`.home-page[data-page="${pageIndex}"]`, document);
+    const items = page
+      ? $$('.app-icon-wrap[data-location="page"]', page).filter(item => item.dataset.appId !== appId)
+      : [];
+    if (!items.length) return 0;
+
+    let bestItem = items[0];
+    let bestDist = Number.POSITIVE_INFINITY;
+    for (const item of items) {
+      const r = item.getBoundingClientRect();
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      const dist = Math.hypot(clientX - cx, clientY - cy);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestItem = item;
+      }
+    }
+
+    const rect = bestItem.getBoundingClientRect();
+    const index = Number(bestItem.dataset.index || 0);
+    const after = clientY > rect.top + rect.height * 0.65 || clientX > rect.left + rect.width / 2;
+    return index + (after ? 1 : 0);
+  }
+
+  _computeDockDropIndex(clientX, appId) {
+    const dock = $('#dock-icons', document);
+    const items = dock
+      ? $$('.app-icon-wrap[data-location="dock"]', dock).filter(item => item.dataset.appId !== appId)
+      : [];
+    if (!items.length) return 0;
+
+    let bestItem = items[0];
+    let bestDist = Number.POSITIVE_INFINITY;
+    for (const item of items) {
+      const rect = item.getBoundingClientRect();
+      const center = rect.left + rect.width / 2;
+      const dist = Math.abs(clientX - center);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestItem = item;
+      }
+    }
+
+    const rect = bestItem.getBoundingClientRect();
+    const index = Number(bestItem.dataset.index || 0);
+    return clientX > rect.left + rect.width * 0.58 ? index + 1 : index;
+  }
+
+  _detectHomeDropTarget(clientX, clientY, appId) {
+    const dockRect = $('#dock')?.getBoundingClientRect();
+    const currentPlacement = this._findHomePlacement(appId);
+    const dockWithoutDragged = this._homeLayout.dock.filter(id => id !== appId);
+    const canUseDock = currentPlacement?.location === 'dock' || dockWithoutDragged.length < 4;
+    const inDockZone = dockRect
+      && clientX >= dockRect.left - 14
+      && clientX <= dockRect.right + 14
+      && clientY >= dockRect.top - 26
+      && clientY <= dockRect.bottom + 18;
+
+    if (canUseDock && inDockZone) {
+      return {
+        location: 'dock',
+        index: this._computeDockDropIndex(clientX, appId),
+      };
+    }
+
+    return {
+      location: 'page',
+      pageIndex: this._homePage,
+      index: this._computeDropIndex(this._homePage, clientX, clientY, appId),
+    };
+  }
+
+  _moveHomeItem(fromPlacement, toPlacement, appId) {
+    const pages = this._homeLayout.pages.map(page => page.filter(id => id !== appId));
+    const dock = this._homeLayout.dock.filter(id => id !== appId);
+
+    if (toPlacement.location === 'dock') {
+      if (dock.length >= 4) return fromPlacement;
+      const finalIndex = clamp(toPlacement.index, 0, dock.length);
+      dock.splice(finalIndex, 0, appId);
+      this._homeLayout = {
+        pages: this._compactHomePages(pages),
+        dock,
+      };
+      this._homePage = clamp(this._homePage, 0, Math.max(0, this._homeLayout.pages.length - 1));
+      this._saveHomeLayout();
+      return { location: 'dock', index: finalIndex };
+    }
+
+    while (pages.length <= toPlacement.pageIndex) pages.push([]);
+    const insertList = pages[toPlacement.pageIndex];
+    const finalIndex = clamp(toPlacement.index, 0, insertList.length);
+    insertList.splice(finalIndex, 0, appId);
+    this._homeLayout = {
+      pages: this._compactHomePages(pages),
+      dock,
+    };
+    const finalPlacement = this._findHomePlacement(appId, this._homeLayout) || { location: 'page', pageIndex: 0, index: 0 };
+    this._homePage = clamp(finalPlacement.pageIndex ?? this._homePage, 0, Math.max(0, this._homeLayout.pages.length - 1));
+    this._saveHomeLayout();
+    return finalPlacement;
+  }
+
+  _setHomePage(index, animate = true) {
+    this._homePage = clamp(index, 0, Math.max(0, this._homeLayout.pages.length - 1));
+    const pagesEl = $('#home-pages');
+    if (!pagesEl) return;
+    pagesEl.style.transition = animate ? '' : 'none';
+    pagesEl.style.transform = `translateX(${-this._homePage * 100}%)`;
+    $$('.page-dot', document).forEach((dot, i) => dot.classList.toggle('is-active', i === this._homePage));
+    if (!animate) requestAnimationFrame(() => { pagesEl.style.transition = ''; });
+  }
+
+  _setupHomeGestures() {
+    const wrap = $('#home-pages-wrap');
+    if (!wrap) return;
+    let startX = 0, startY = 0, dragging = false;
+
+    // ── shared logic ─────────────────────────────────────────────
+    const onDragStart = (x, y) => { startX = x; startY = y; dragging = true; };
+
+    const onDragMove = (x, y) => {
+      if (!dragging) return false;
+      const dx = x - startX;
+      const dy = y - startY;
+      // Once we know it's more vertical than horizontal, give up
+      if (Math.abs(dy) > Math.abs(dx)) { dragging = false; return false; }
+      if (Math.abs(dx) <= 6) return true;
+      const pagesEl = $('#home-pages');
+      pagesEl.style.transition = 'none';
+      pagesEl.style.transform = `translateX(calc(${-this._homePage * 100}% + ${(dx / wrap.clientWidth) * 100}%))`;
+      return true; // consumed as horizontal swipe
+    };
+
+    const onDragEnd = (x, y) => {
+      if (!dragging) return;
+      dragging = false;
+      const dx = x - startX;
+      const dy = y - startY;
+      const pagesEl = $('#home-pages');
+      pagesEl.style.transition = '';
+      if (Math.abs(dx) > 55 && Math.abs(dx) > Math.abs(dy)) {
+        this._homePage = clamp(this._homePage + (dx < 0 ? 1 : -1), 0, this._homeLayout.pages.length - 1);
+        this._suppressIconClickUntil = Date.now() + 240;
+      }
+      this._setHomePage(this._homePage);
+    };
+
+    // ── Mouse events (desktop) ────────────────────────────────────
+    wrap.addEventListener('mousedown', (e) => {
+      if (this.state !== 'home' || this._editMode || this.controlCenter.isOpen() || e.target.closest('.app-icon-wrap')) return;
+      onDragStart(e.clientX, e.clientY);
+      e.preventDefault();
+    });
+    window.addEventListener('mousemove', (e) => { if (dragging) onDragMove(e.clientX, e.clientY); });
+    window.addEventListener('mouseup',   (e) => { onDragEnd(e.clientX, e.clientY); });
+
+    // ── Touch events (mobile / iOS Safari) ───────────────────────
+    wrap.addEventListener('touchstart', (e) => {
+      if (this.state !== 'home' || this._editMode || this.controlCenter.isOpen() || e.target.closest('.app-icon-wrap')) return;
+      const t = e.touches[0];
+      onDragStart(t.clientX, t.clientY);
+    }, { passive: true });
+
+    wrap.addEventListener('touchmove', (e) => {
+      if (!dragging) return;
+      const t = e.touches[0];
+      const consumed = onDragMove(t.clientX, t.clientY);
+      if (consumed) e.preventDefault(); // block browser page-scroll only for horizontal swipes
+    }, { passive: false });
+
+    wrap.addEventListener('touchend', (e) => {
+      const t = e.changedTouches[0];
+      onDragEnd(t.clientX, t.clientY);
+    }, { passive: true });
+
+    // ── Exit edit mode on outside tap ────────────────────────────
+    document.addEventListener('mousedown', (e) => {
+      if (!this._editMode || this.state !== 'home' || this._dragState) return;
+      if (e.target.closest('.app-icon-wrap') || e.target.closest('#dock') || e.target.closest('#page-dots')) return;
+      this._editMode = false;
+      this._renderHomeScreen();
+    });
+  }
+
+  openApp(id, fromEl) {
+    const app = this._apps[id];
+    if (!app) return;
+
+    if (this._editMode) {
+      this._editMode = false;
+      this._renderHomeScreen();
+    }
+    if (this.controlCenter.isOpen()) this.controlCenter.close();
+    if (this.state === 'switcher') this.switcher.hide();
+    if (this._current && this._current !== id) this.closeApp(this._current);
+
+    if (fromEl) {
+      const iR = fromEl.getBoundingClientRect();
+      const sR = $('#screen').getBoundingClientRect();
+      const ox = ((iR.left + iR.width / 2 - sR.left) / sR.width * 100).toFixed(1);
+      const oy = ((iR.top + iR.height / 2 - sR.top) / sR.height * 100).toFixed(1);
+      app.window.style.transformOrigin = `${ox}% ${oy}%`;
+    } else {
+      app.window.style.transformOrigin = '50% 90%';
+    }
+
+    this._stack = this._stack.filter(x => x !== id);
+    this._stack.push(id);
+    this._current = id;
+    this.state = 'app';
+
+    app.window.classList.remove('is-closing');
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => app.window.classList.add('is-open'));
+    });
+    app.onOpen();
+  }
+
+  closeApp(id, removeFromStack = false) {
+    const app = this._apps[id];
+    if (!app) return;
+
+    const wasOpen = app.window.classList.contains('is-open');
+    this._captureAppSnapshot(id);
+    app.window.classList.remove('is-open');
+
+    if (wasOpen) {
+      app.window.classList.add('is-closing');
+      setTimeout(() => {
+        app.window.classList.remove('is-closing');
+        if (removeFromStack) this._stack = this._stack.filter(x => x !== id);
+        app.onClose();
+      }, 380);
+    } else {
+      if (removeFromStack) this._stack = this._stack.filter(x => x !== id);
+      app.onClose();
+    }
+
+    if (this._current === id) this._current = null;
+    if (this.state !== 'switcher') this.state = 'home';
+  }
+
+  dismissFromSwitcher(id) {
+    this._stack = this._stack.filter(x => x !== id);
+    const app = this._apps[id];
+    if (app) {
+      this._captureAppSnapshot(id);
+      app.window.classList.remove('is-open', 'is-closing');
+      app.onClose();
+    }
+    if (this._current === id) this._current = null;
+  }
+
+  goHome() {
+    if (this._current) this.closeApp(this._current);
+    if (this.state === 'switcher') this.switcher.hide();
+    if (this.controlCenter.isOpen()) this.controlCenter.close();
+    this.state = 'home';
+  }
+
+  showSwitcher() {
+    if (!this._stack.length && !this._current) return;
+    if (this.controlCenter.isOpen()) this.controlCenter.close();
+    if (this._current) this.closeApp(this._current);
+    this.state = 'switcher';
+    this.switcher.show(this._stack);
+  }
+
+  _setupHomeBar() {
+    const bar  = $('#home-bar');
+    const pill = $('#home-pill');
+    let startY = 0, dragging = false;
+
+    // ── shared logic ─────────────────────────────────────────────
+    const onStart = (y) => { startY = y; dragging = true; };
+
+    const onMove = (y) => {
+      if (!dragging) return;
+      const delta = startY - y;
+      if (delta > 10) {
+        pill.style.width   = Math.min(180, 134 + delta * 0.3) + 'px';
+        pill.style.opacity = '0.65';
+      }
+    };
+
+    const onEnd = (y) => {
+      if (!dragging) return;
+      dragging = false;
+      pill.style.width   = '134px';
+      pill.style.opacity = '';
+      const delta = startY - y;
+      if (delta > 80) {
+        if (this.state === 'app' || (this.state === 'home' && this._stack.length)) this.showSwitcher();
+        else if (this.state === 'switcher') this.goHome();
+      } else if (delta > 30) {
+        if (this.state === 'app') this.goHome();
+        else if (this.state === 'home' && this._stack.length) this.showSwitcher();
+        else if (this.state === 'switcher') this.goHome();
+      }
+    };
+
+    // ── Mouse (desktop) ───────────────────────────────────────────
+    bar.addEventListener('mousedown', e => { onStart(e.clientY); e.preventDefault(); });
+    window.addEventListener('mousemove', e => onMove(e.clientY));
+    window.addEventListener('mouseup',   e => onEnd(e.clientY));
+
+    // ── Touch (mobile / iOS Safari) ───────────────────────────────
+    bar.addEventListener('touchstart', e => {
+      onStart(e.touches[0].clientY);
+    }, { passive: true });
+
+    // Listen on window so fast upward swipes aren't lost outside the bar
+    window.addEventListener('touchmove', e => {
+      if (!dragging) return;
+      onMove(e.touches[0].clientY);
+      e.preventDefault();   // prevent page bounce during upward swipe
+    }, { passive: false });
+
+    window.addEventListener('touchend', e => {
+      onEnd(e.changedTouches[0].clientY);
+    }, { passive: true });
+  }
+
+  _startClock() {
+    const update = () => {
+      const now = new Date();
+      const hh  = String(now.getHours()).padStart(2,'0');
+      const mm  = String(now.getMinutes()).padStart(2,'0');
+      const el  = $('#status-time');
+      if (el) el.textContent = `${hh}:${mm}`;
+    };
+    update();
+    setInterval(update, 15000);
+  }
+
+  _drawWallpaper() {
+    const canvas = $('#wallpaper-canvas');
+    if (!canvas) return;
+    const w = canvas.offsetWidth  || 381;
+    const h = canvas.offsetHeight || 840;
+    canvas.width  = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+
+    const base = ctx.createLinearGradient(0, 0, w, h);
+    base.addColorStop(0,   '#0d0824');
+    base.addColorStop(0.5, '#160d30');
+    base.addColorStop(1,   '#040618');
+    ctx.fillStyle = base;
+    ctx.fillRect(0, 0, w, h);
+
+    const blobs = [
+      { x:0.25, y:0.25, r:0.45, c:'rgba(88,40,180,0.45)' },
+      { x:0.75, y:0.55, c:'rgba(30,80,200,0.38)', r:0.4  },
+      { x:0.5,  y:0.8,  c:'rgba(120,20,140,0.32)', r:0.5  },
+      { x:0.1,  y:0.7,  c:'rgba(20,120,150,0.22)', r:0.3  },
+    ];
+    for (const b of blobs) {
+      const rx = b.x * w, ry = b.y * h, rr = b.r * Math.max(w,h);
+      const g = ctx.createRadialGradient(rx, ry, 0, rx, ry, rr);
+      g.addColorStop(0,   b.c);
+      g.addColorStop(1,   'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h);
+    }
+
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    for (let i = 0; i < 80; i++) {
+      const sx = Math.random() * w;
+      const sy = Math.random() * h;
+      const sr = Math.random() * 1.2;
+      ctx.beginPath();
+      ctx.arc(sx, sy, sr, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  _startNotifPolling() {
+    setInterval(async () => {
+      try {
+        const data = await this.ds.get('notifications', true);
+        for (const n of data?.notifications || []) this.notifMgr.show(n);
+      } catch {}
+    }, CFG.POLL_NOTIF);
+  }
+
+  onResize() {
+    this._drawWallpaper();
+    this._setHomePage(this._homePage, false);
+    this.assistant?.snapToEdge?.(true);
+  }
+}
+
+// ── 17. INIT ──────────────────────────────────────────────────────
+const os = new ORCAOS();
+
+// Scale phone to fit viewport — called on load, resize, and fullscreen-exit.
+function fitPhone() {
+  const phone = document.getElementById('phone');
+  if (!phone) return;
+
+  // Mobile full-screen (≤479 px): CSS media query takes over, hands off.
+  if (window.innerWidth <= 479) {
+    phone.style.transform  = '';
+    phone.style.marginBlock = '';
+    return;
+  }
+
+  // True browser fullscreen: _setupFullscreen() manages its own scale.
+  if (document.fullscreenElement) return;
+
+  const vw     = window.innerWidth;
+  const vh     = window.innerHeight;
+  const PW     = 393;
+  const PH     = 852;
+  const margin = 32;   // breathing room on each side
+  const scale  = Math.min(1, (vw - margin) / PW, (vh - margin) / PH);
+
+  if (scale < 1) {
+    phone.style.transform   = `scale(${scale.toFixed(4)})`;
+    // ── KEY FIX ────────────────────────────────────────────────────
+    // transform: scale() shrinks the visual size but NOT the layout box.
+    // The flex parent still thinks phone is 852 px tall and centres it
+    // accordingly, pushing the top off-screen.
+    // Adding a negative margin-block equal to the "lost" space fixes this:
+    //   visual height  = scale × PH
+    //   layout height  = PH  (unchanged)
+    //   excess space   = (1 – scale) × PH  →  half on each side
+    //   fix: margin    = (scale – 1) × PH / 2   (a negative value)
+    phone.style.marginBlock = `${((scale - 1) * PH / 2).toFixed(1)}px`;
+  } else {
+    phone.style.transform   = '';
+    phone.style.marginBlock = '';
+  }
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+  await os.init();
+  fitPhone();
+
+  // Draw wallpaper after layout is settled
+  setTimeout(() => os.onResize(), 100);
+});
+
+window.addEventListener('resize', fitPhone);
+
+// Re-fit after exiting browser fullscreen
+document.addEventListener('fullscreenchange', () => {
+  if (!document.fullscreenElement) fitPhone();
+});

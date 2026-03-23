@@ -21,7 +21,7 @@ class ContactorsToolkit(BaseToolkit):
     def __init__(self):
         super().__init__()
         base_dir = Path(__file__).resolve().parent.parent
-        self.profiles_path = base_dir / "mock_data" / "contactors" / "contactors_profiles.md"
+        self.profiles_path = base_dir / "mock_data" / "contactors" / "contactors_profiles.json"
         self.mock_data_path = base_dir / "mock_data" / "contactors" / "contactors_data.json"
         self._soul_path = base_dir / "mock_data" / "soul" / "soul.json"
 
@@ -60,8 +60,13 @@ class ContactorsToolkit(BaseToolkit):
                  communication tone guidance.
         """
         logger.info(f"Fetching contactors app profiles for: {query}")
-        with open(self.profiles_path, encoding="utf-8") as f:
-            return f.read()
+        try:
+            with open(self.profiles_path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            logger.warning(f"Failed to load contactors app profiles: {e}")
+            return json.dumps([])
+        return json.dumps(data, ensure_ascii=False, indent=2)
 
     def get_message_history(self) -> str:
         """

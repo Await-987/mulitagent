@@ -8,7 +8,7 @@ def main():
     # Test queries
     test_queries = [
         "请帮助用户发布一个小红书笔记，内容就是我今天去上海的思南公馆的咖啡厅喝咖啡了，特别开心。配图的照片是C:\\Users\\45092\\Desktop\\aios\\mock_data\\photos\\coffee.jpg。",
-        "用户发小红书照片的时候有什么特殊的习惯吗？"
+        # "用户发小红书照片的时候有什么特殊的习惯吗？"
     ]
 
     for query in test_queries:
