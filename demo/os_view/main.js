@@ -2151,7 +2151,7 @@ class SettingsApp extends BaseApp {
         <div class="settings-group">
           <div class="settings-group-title">关于本机</div>
           <div class="settings-card">
-            <div class="settings-row"><span>设备</span><strong>ORCA OS View</strong></div>
+            <div class="settings-row"><span>设备</span><strong>ORCA Pro Max</strong></div>
             <div class="settings-divider"></div>
             <div class="settings-row"><span>前端访问</span><strong>Web / Browser</strong></div>
             <div class="settings-divider"></div>
@@ -2400,25 +2400,24 @@ class XiaoYiAssistant {
   _makeBubbleDraggable() {
     let sx, sy, ox, oy, scaleX = 1, scaleY = 1, dragging = false;
 
-    this.bubble.addEventListener('mousedown', e => {
+    const onStart = (clientX, clientY) => {
       const metrics = this._screenMetrics();
       if (!metrics) return;
-      sx = e.clientX; sy = e.clientY;
+      sx = clientX; sy = clientY;
       ox = this.bubble.offsetLeft;
       oy = this.bubble.offsetTop;
       scaleX = metrics.scaleX || 1;
       scaleY = metrics.scaleY || 1;
       this.bubble.style.transition = 'none';
       dragging = true;
-      e.preventDefault();
-    });
+    };
 
-    window.addEventListener('mousemove', e => {
+    const onMove = (clientX, clientY) => {
       if (!dragging) return;
       const metrics = this._screenMetrics();
       if (!metrics) return;
-      const dx = (e.clientX - sx) / scaleX;
-      const dy = (e.clientY - sy) / scaleY;
+      const dx = (clientX - sx) / scaleX;
+      const dy = (clientY - sy) / scaleY;
       this._dy = dy;
       const bw = this.bubble.offsetWidth;
       const bh = this.bubble.offsetHeight;
@@ -2430,20 +2429,40 @@ class XiaoYiAssistant {
       this.bubble.style.bottom = 'unset';
       this.bubble.style.left   = nx + 'px';
       this.bubble.style.top    = ny + 'px';
-    });
+    };
 
-    window.addEventListener('mouseup', e => {
+    const onEnd = (clientX, clientY) => {
       if (!dragging) return;
       dragging = false;
       this.bubble.style.transition = '';
       this.snapToEdge();
-
-      // if barely moved → treat as tap (use mouseup position for final delta)
-      const totalDx = Math.abs((e.clientX - sx) / scaleX);
-      const totalDy = Math.abs((e.clientY - sy) / scaleY);
+      // if barely moved → treat as tap
+      const totalDx = Math.abs((clientX - sx) / scaleX);
+      const totalDy = Math.abs((clientY - sy) / scaleY);
       if (totalDx < 8 && totalDy < 8) {
         this.toggle();
       }
+    };
+
+    // ── Mouse ─────────────────────────────────────────────────────
+    this.bubble.addEventListener('mousedown', e => { onStart(e.clientX, e.clientY); e.preventDefault(); });
+    window.addEventListener('mousemove', e => onMove(e.clientX, e.clientY));
+    window.addEventListener('mouseup',   e => onEnd(e.clientX, e.clientY));
+
+    // ── Touch (mobile) ────────────────────────────────────────────
+    this.bubble.addEventListener('touchstart', e => {
+      const t = e.touches[0];
+      if (!t) return;
+      onStart(t.clientX, t.clientY);
+      e.preventDefault();
+    }, { passive: false });
+    window.addEventListener('touchmove', e => {
+      const t = e.touches[0];
+      if (t) onMove(t.clientX, t.clientY);
+    }, { passive: false });
+    window.addEventListener('touchend', e => {
+      const t = e.changedTouches[0];
+      if (t) onEnd(t.clientX, t.clientY);
     });
   }
 }
@@ -2541,6 +2560,10 @@ class ControlCenter {
     $$('.cc-toggle', this.el).forEach(btn => {
       btn.classList.toggle('is-on', !!this._toggles[btn.dataset.toggle]);
     });
+    const wifiChip = $('#cc-chip-wifi');
+    const btChip = $('#cc-chip-bluetooth');
+    if (wifiChip) wifiChip.textContent = this._toggles.wifi ? 'Wi-Fi: ORCA-LAN' : 'Wi-Fi: 已关闭';
+    if (btChip) btChip.textContent = this._toggles.bluetooth ? '蓝牙: 已开启' : '蓝牙: 已关闭';
   }
 
   _applyBrightness() {

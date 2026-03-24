@@ -375,5 +375,19 @@ def api_push():
 
 # ── Run ───────────────────────────────────────────────────────────────────
 if __name__ == '__main__':
-    print('\nORCA OS View  ->  http://0.0.0.0:5001\n')
+    import socket as _socket
+    _lan_ip = None
+    try:
+        _s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+        _s.connect(('8.8.8.8', 80))
+        _lan_ip = _s.getsockname()[0]
+        _s.close()
+    except Exception:
+        pass
+
+    print('\nORCA OS View')
+    print('  Local:   http://127.0.0.1:5001')
+    if _lan_ip:
+        print(f'  Network: http://{_lan_ip}:5001')
+    print()
     app.run(host='0.0.0.0', debug=True, port=5001, use_reloader=False)

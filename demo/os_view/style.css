@@ -572,7 +572,7 @@ body.homescreen-dragging .app-icon-wrap.is-drag-source .app-icon {
 .switcher-preview-stage > .app-window-inner {
   width: 381px;
   height: 840px;
-  transform: scale(.61);
+  transform: scale(0.661);
   transform-origin: top left;
   pointer-events: none;
 }
