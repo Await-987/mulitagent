@@ -292,6 +292,7 @@ class AppSwitcher {
 
     if (!apps.length) { this.os.goHome(); return; }
 
+    this.el.closest('#screen')?.classList.add('switcher-active');
     this.el.classList.remove('hidden');
     requestAnimationFrame(() => {
       this.el.classList.add('is-open');
@@ -308,6 +309,7 @@ class AppSwitcher {
   hide() {
     this.el.classList.remove('is-open');
     this.el.classList.add('hidden');
+    this.el.closest('#screen')?.classList.remove('switcher-active');
   }
 
   _scheduleDepth() {
@@ -538,14 +540,16 @@ class BaseApp {
 class SearchApp extends BaseApp {
   constructor(os) {
     super(os, { id:'search', name:'搜索', icon:'🔍', iconBg:'#007AFF', headerBg:'#f2f2f7' });
+    this._sessionId   = null;
+    this._inChat      = false;
+    this._isLoading   = false;
+    this._initialized = false;
   }
 
   buildHTML() {
     return `<div class="app-window-inner search-app" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
-      <div id="search-home" style="flex:1;overflow-y:auto;">
-        ${this._heroHTML()}
-      </div>
-      <div id="search-result-panel" style="display:none;flex:1;overflow-y:auto;"></div>
+      <div id="search-home" style="flex:1;overflow-y:auto;"></div>
+      <div id="search-chat-wrap" class="search-chat-wrap" style="display:none;"></div>
     </div>`;
   }
 
@@ -569,34 +573,56 @@ class SearchApp extends BaseApp {
     </div>`;
   }
 
-  async onOpen() {
-    await this._renderHome();
+  _chatHTML() {
+    return `
+      <div class="search-chat-header">
+        <span class="search-chat-title">🔍 ORCA 搜索</span>
+        <button class="search-chat-reset" id="search-reset-btn">重置</button>
+      </div>
+      <div class="search-chat-messages" id="search-chat-msgs"></div>
+      <div class="search-chat-input-row">
+        <input id="search-chat-input" type="text" placeholder="继续提问…" autocomplete="off" />
+        <button id="search-chat-send" title="发送">
+          <svg width="16" height="16" viewBox="0 0 18 18"><path d="M2 9L16 2l-7 14V10H2z" fill="currentColor"/></svg>
+        </button>
+      </div>`;
   }
 
-  async _renderHome() {
+  onOpen() {
+    if (!this._initialized) {
+      this._initialized = true;
+      this._renderHome();
+    }
+  }
+
+  _renderHome() {
     const home = $('#search-home', this.window);
-    if (home) home.innerHTML = this._heroHTML();
+    const chat = $('#search-chat-wrap', this.window);
+    if (home) { home.innerHTML = this._heroHTML(); home.style.display = ''; }
+    if (chat) chat.style.display = 'none';
+    this._inChat    = false;
+    this._isLoading = false;
     this._bindSearch();
-    const rp = $('#search-result-panel', this.window);
-    if (rp) rp.style.display = 'none';
   }
 
   _bindSearch() {
     const win = this.window;
     const doSearch = async () => {
       const q = ($('#search-q', win) || {}).value?.trim();
-      if (!q) return;
-      this._showResults(q);
-      // AIOS HOOK: replace mock below with actual AIOS Search Agent call
-      const data = await this.os.ds.post('search', { query: q });
-      this._showAnswer(q, data?.answer || '搜索中出现错误。');
+      if (!q || this._isLoading) return;
+      this._enterChat();
+      this._appendUserMsg(q);
+      this._appendThinking();
+      this._isLoading = true;
+      const data = await this.os.ds.post('search', { query: q, session_id: this._sessionId || '' });
+      if (data?.session_id) this._sessionId = data.session_id;
+      this._replaceThinking(data?.answer || '搜索出错，请重试。');
+      this._isLoading = false;
     };
-
     const btn = $('#search-btn', win);
     const inp = $('#search-q', win);
     if (btn) btn.addEventListener('click', doSearch);
     if (inp) inp.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
-
     $$('.search-chip', win).forEach(c => {
       c.addEventListener('click', () => {
         const inp2 = $('#search-q', win);
@@ -606,42 +632,109 @@ class SearchApp extends BaseApp {
     });
   }
 
-  _showResults(q) {
+  _enterChat() {
+    if (this._inChat) return;
+    this._inChat = true;
     const home = $('#search-home', this.window);
-    const rp   = $('#search-result-panel', this.window);
+    const chat = $('#search-chat-wrap', this.window);
     if (home) home.style.display = 'none';
-    if (!rp)  return;
-    rp.style.display = 'block';
-    rp.innerHTML = `
-      <div style="padding:12px 16px 0;">
-        <button class="app-back" style="color:#007AFF;font-size:15px;" id="search-back-btn">
-          <svg width="10" height="17" viewBox="0 0 10 17" fill="none">
-            <path d="M9 1L1 8.5L9 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          &nbsp;搜索
-        </button>
-        <div style="font-size:18px;font-weight:600;color:#000;margin:8px 0 4px;">${q}</div>
-      </div>
-      <div class="search-results">
-        <div class="search-thinking">🤔 ORCA Search Agent 正在搜索…</div>
-      </div>`;
-    $('#search-back-btn', this.window)?.addEventListener('click', () => this._renderHome());
+    if (!chat) return;
+    chat.style.display = 'flex';
+    chat.innerHTML = this._chatHTML();
+    this._bindChatInput();
   }
 
-  _showAnswer(q, answer) {
-    const rp = $('#search-result-panel', this.window);
-    if (!rp) return;
-    const results = rp.querySelector('.search-results');
-    if (!results) return;
-    results.innerHTML = `<div class="search-answer">
-      <div class="search-answer-header">
-        <span>✨ ORCA Search Agent</span>
-      </div>
-      ${answer.replace(/\n/g,'<br>').replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>')}
-    </div>`;
+  _bindChatInput() {
+    const win = this.window;
+    const doSend = async () => {
+      const inp = $('#search-chat-input', win);
+      const q   = inp?.value?.trim();
+      if (!q || this._isLoading) return;
+      if (inp) inp.value = '';
+      this._appendUserMsg(q);
+      this._appendThinking();
+      this._isLoading = true;
+      const data = await this.os.ds.post('search', { query: q, session_id: this._sessionId || '' });
+      if (data?.session_id) this._sessionId = data.session_id;
+      this._replaceThinking(data?.answer || '出现错误，请重试。');
+      this._isLoading = false;
+    };
+    const sendBtn = $('#search-chat-send', win);
+    const inp     = $('#search-chat-input', win);
+    if (sendBtn) sendBtn.addEventListener('click', doSend);
+    if (inp)     inp.addEventListener('keydown', e => { if (e.key === 'Enter') doSend(); });
+
+    const resetBtn = $('#search-reset-btn', win);
+    if (resetBtn) resetBtn.addEventListener('click', async () => {
+      if (this._sessionId) {
+        await this.os.ds.post('search/reset', { session_id: this._sessionId }).catch(() => {});
+        this._sessionId = null;
+      }
+      this._initialized = false;
+      this.onOpen();
+    });
   }
 
-  onClose() { this._renderHome(); }
+  _appendUserMsg(text) {
+    const msgs = $('#search-chat-msgs', this.window);
+    if (!msgs) return;
+    const div = document.createElement('div');
+    div.className = 'search-msg search-msg-user';
+    div.textContent = text;
+    msgs.appendChild(div);
+    msgs.scrollTop = msgs.scrollHeight;
+  }
+
+  _appendThinking() {
+    const msgs = $('#search-chat-msgs', this.window);
+    if (!msgs) return;
+    const div = document.createElement('div');
+    div.className = 'search-msg search-msg-agent search-msg-thinking';
+    div.id = 'search-thinking-msg';
+    div.innerHTML = `<span class="search-typing-dot"></span><span class="search-typing-dot"></span><span class="search-typing-dot"></span>`;
+    msgs.appendChild(div);
+    msgs.scrollTop = msgs.scrollHeight;
+  }
+
+  _replaceThinking(answer) {
+    const msgs = $('#search-chat-msgs', this.window);
+    if (!msgs) return;
+    const thinking = msgs.querySelector('#search-thinking-msg');
+    if (thinking) thinking.remove();
+    const div = document.createElement('div');
+    div.className = 'search-msg search-msg-agent search-msg-markdown';
+
+    // Render Markdown → sanitize → inject
+    let html;
+    if (window.marked) {
+      html = window.marked.parse(answer, { breaks: true, gfm: true });
+      if (window.DOMPurify) html = window.DOMPurify.sanitize(html);
+    } else {
+      html = answer
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/\n/g, '<br>')
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    }
+    div.innerHTML = html;
+
+    // Render math formulas (KaTeX)
+    if (window.renderMathInElement) {
+      window.renderMathInElement(div, {
+        delimiters: [
+          { left: '$$',  right: '$$',  display: true  },
+          { left: '$',   right: '$',   display: false },
+          { left: '\\[', right: '\\]', display: true  },
+          { left: '\\(', right: '\\)', display: false },
+        ],
+        throwOnError: false,
+      });
+    }
+
+    msgs.appendChild(div);
+    msgs.scrollTop = msgs.scrollHeight;
+  }
+
+  onClose() { /* preserve chat state across app switches */ }
 }
 
 // ── 8. CONTACTS APP ───────────────────────────────────────────────

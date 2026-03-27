@@ -10,34 +10,23 @@ def backend_model():
     api_key = os.getenv('OPENAI_API_KEY')
     url = os.getenv('url')
 
-    # return ModelFactory.create(
-    #     model_platform=ModelPlatformType.OPENAI_COMPATIBLE_MODEL,
-    #     model_type="qwen3.5-9b",
-    #     api_key="sk-qwen35",
-    #     url="http://117.186.43.62:4809/v1",
-    #     token_counter=StubTokenCounter(),
-    #     model_config_dict={
-    #         "stream": False
-    #     },
-    # )
-
-    # return ModelFactory.create(
-    #     model_platform=ModelPlatformType.OPENAI_COMPATIBLE_MODEL,
-    #     model_type="qwq32b",
-    #     api_key="sk-qwq123",
-    #     url="http://117.186.43.62:5032/v1",
-    #     token_counter=StubTokenCounter(),
-    #     model_config_dict={
-    #         "stream": False,
-    #     },
-    # )
-
     return ModelFactory.create(
-        model_platform=ModelPlatformType.OPENAI,
-        model_type="qwen3.5-plus",
-        api_key=api_key,
-        url=url
+        model_platform=ModelPlatformType.OPENAI_COMPATIBLE_MODEL,
+        model_type="qwen3.5-27b",
+        api_key="sk-qwen35",
+        url="http://117.186.43.62:5027/v1",
+        token_counter=StubTokenCounter(),
+        model_config_dict={
+            "stream": False,
+        },
     )
+
+    # return ModelFactory.create(
+    #     model_platform=ModelPlatformType.OPENAI,
+    #     model_type="qwen3.5-plus",
+    #     api_key=api_key,
+    #     url=url
+    # )
 
 
 def backend_model_image():
@@ -46,9 +35,9 @@ def backend_model_image():
 
     return ModelFactory.create(
         model_platform=ModelPlatformType.OPENAI_COMPATIBLE_MODEL,
-        model_type="qwen3.5-9b",
+        model_type="qwen3.5-27b",
         api_key="sk-qwen35",
-        url="http://117.186.43.62:4809/v1",
+        url="http://117.186.43.62:5027/v1",
         token_counter=StubTokenCounter(),
         model_config_dict={
             "stream": False

@@ -6,7 +6,7 @@ Then open: http://127.0.0.1:5001 or http://<LAN-IP>:5001
 """
 from flask import Flask, jsonify, send_file, request, send_from_directory, abort
 from flask_cors import CORS
-import json, os, uuid, threading
+import json, os, uuid, threading, sys, asyncio
 from urllib.parse import quote
 from pathlib import Path
 from datetime import datetime
@@ -17,6 +17,9 @@ CORS(app)
 THIS_DIR   = Path(__file__).parent
 DEMO_DIR   = THIS_DIR.parent
 ROOT_DIR   = DEMO_DIR.parent
+# Make project root importable (for agents/, tools/, etc.)
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 MOCK_DIR   = ROOT_DIR / 'mock_data'
 WORK_DIR   = DEMO_DIR / 'working_dir'
 IMAGES_DIR = ROOT_DIR / 'images'
@@ -26,6 +29,10 @@ ICON_DIRS = [OS_VIEW_IMAGE_DIR, IMAGES_DIR]
 # ── in-memory notification queue ──────────────────────────────────────────
 _notifs      = []
 _notif_lock  = threading.Lock()
+
+# ── search agent sessions ─────────────────────────────────────────────────
+_search_sessions      = {}   # session_id → ChatAgent instance
+_search_sessions_lock = threading.Lock()
 
 # ── helpers ───────────────────────────────────────────────────────────────
 def load_json(path):
@@ -133,6 +140,13 @@ def css():
 @app.route('/main.js')
 def js():
     return send_file(THIS_DIR / 'main.js', mimetype='application/javascript')
+
+@app.route('/lib/<path:filename>')
+def lib_asset(filename):
+    path = (THIS_DIR / 'lib' / filename).resolve()
+    if not str(path).startswith(str((THIS_DIR / 'lib').resolve())) or not path.exists():
+        abort(404)
+    return send_from_directory(str(path.parent), path.name)
 
 @app.route('/api/assets/images/<path:filename>')
 def image_asset(filename):
@@ -305,25 +319,50 @@ def api_documents():
 def api_document_file(filename):
     return send_from_directory(str(WORK_DIR), filename)
 
-# ── Search (AIOS hook) ────────────────────────────────────────────────────
+# ── Search (AIOS Search Agent) ────────────────────────────────────────────
 @app.route('/api/search', methods=['GET', 'POST'])
 def api_search():
-    """
-    Interface hook for AIOS Search Agent.
-    Future: POST query → aios_demo.py Search workflow → stream results.
-    """
     if request.method == 'POST':
-        body  = request.get_json() or {}
-        query = body.get('query', '')
-        # TODO: route to ORCA Search Agent
-        return jsonify({
-            'status':  'mock',
-            'query':   query,
-            'answer':  (f'**搜索接口预留**\n\n'
-                        f'您的问题：{query}\n\n'
-                        f'接入 AIOS Search Agent 后将在此显示真实搜索结果。'),
-        })
+        body       = request.get_json() or {}
+        query      = str(body.get('query', '')).strip()
+        session_id = str(body.get('session_id', '')).strip()
+        if not query:
+            return jsonify({'status': 'error', 'answer': '请输入搜索内容。'})
+        if not session_id:
+            session_id = str(uuid.uuid4())
+
+        # Lazily create a search agent for this session
+        try:
+            with _search_sessions_lock:
+                if session_id not in _search_sessions:
+                    from agents.search_agent import search_agent_factory
+                    _search_sessions[session_id] = search_agent_factory()
+                agent = _search_sessions[session_id]
+        except Exception as e:
+            return jsonify({'status': 'error',
+                            'answer': f'搜索智能体初始化失败：{e}',
+                            'session_id': session_id})
+
+        # Run the async agent step in a fresh event loop
+        try:
+            result = asyncio.run(agent.astep(query))
+            answer = result.msg.content if (result and result.msg) else '未能获取搜索结果。'
+            return jsonify({'status': 'ok', 'query': query,
+                            'answer': answer, 'session_id': session_id})
+        except Exception as e:
+            return jsonify({'status': 'error', 'query': query,
+                            'answer': f'搜索出错：{e}', 'session_id': session_id})
+
     return jsonify({'status': 'ready'})
+
+
+@app.route('/api/search/reset', methods=['POST'])
+def api_search_reset():
+    body       = request.get_json() or {}
+    session_id = str(body.get('session_id', '')).strip()
+    with _search_sessions_lock:
+        _search_sessions.pop(session_id, None)
+    return jsonify({'ok': True})
 
 # ── Assistant / 小艺 (AIOS hook) ──────────────────────────────────────────
 @app.route('/api/assistant', methods=['GET', 'POST'])

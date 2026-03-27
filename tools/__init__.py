@@ -4,6 +4,7 @@ from .xiaohongshu_toolkit import XiaoHongShuToolkit
 from .xiecheng_toolkit import XiechengToolkit
 from .photos_toolkit import PhotosToolkit
 from .soul_toolkit import SoulToolkit
+from .search_toolkit import SearchAPPToolkit
 
 __all__ = [
     'ContactorsToolkit',
@@ -11,5 +12,6 @@ __all__ = [
     'XiaoHongShuToolkit',
     'XiechengToolkit',
     'PhotosToolkit',
-    'SoulToolkit'
+    'SoulToolkit',
+    'SearchAPPToolkit'
     ]
