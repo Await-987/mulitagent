@@ -2342,111 +2342,501 @@ class PlaceholderApp extends BaseApp {
 // ── 15. 小艺 ASSISTANT ────────────────────────────────────────────
 class XiaoYiAssistant {
   constructor(os) {
-    this.os        = os;
-    this.screen    = $('#screen');
-    this.bubble    = $('#xiaoyi-bubble');
-    this.panel     = $('#xiaoyi-panel');
-    this.msgWrap   = $('#xiaoyi-messages');
-    this.input     = $('#xiaoyi-input');
-    this.sendBtn   = $('#xiaoyi-send');
-    this.closeBtn  = $('#xiaoyi-close');
-    this.mask      = $('#xiaoyi-mask');
-    this._open     = false;
-    this._dragging = false;
-    this._dy       = 0;
-    this._startY   = 0;
-    this._sheetMin = 0.54;
-    this._sheetDefault = 0.70;
+    this.os         = os;
+    this.screen     = $('#screen');
+    this.bubble     = $('#xiaoyi-bubble');
+    this.panel      = $('#xiaoyi-panel');
+    this.input      = $('#xiaoyi-input');
+    this.sendBtn    = $('#xiaoyi-send');
+    this.closeBtn   = $('#xiaoyi-close');
+    this.mask       = $('#xiaoyi-mask');
+    this.dotsEl     = $('#xiaoyi-session-dots');
+    this.track      = $('#xiaoyi-sessions-track');
+    this._open      = false;
+    this._sheetMin  = 0.54;
+    this._sheetDefault  = 0.70;
     this._sheetExpanded = 0.90;
-    this._sheetRatio = this._sheetDefault;
+    this._sheetRatio    = this._sheetDefault;
+
+    // ── Multi-session state ──────────────────────────────────────
+    // Each session: { id, cursor, messages: [], pane: <DOM el> }
+    this._sessions      = [];
+    this._current       = 0;   // index into _sessions
+    this._pollTimer     = null;
+    this._closedSessions = new Set();  // session IDs closed by the user — never re-adopt
+
+    // ── Confirm dialog ───────────────────────────────────────────
+    this._confirmDialog     = $('#confirm-dialog');
+    this._confirmPromptEl   = $('#confirm-prompt');
+    this._confirmDetailsEl  = $('#confirm-details');
+    this._confirmYes        = $('#confirm-yes');
+    this._confirmNo         = $('#confirm-no');
+    this._pendingConfirm    = null;   // { sessionId }
   }
 
+  // ─────────────────────────────────────────────────────────────
+  // Bootstrap
+  // ─────────────────────────────────────────────────────────────
   init() {
-    // NOTE: click is handled by mouseup in _makeBubbleDraggable to avoid double-toggle
-    this.closeBtn?.addEventListener('click', () => this.close());
-    this.mask?.addEventListener('click', () => this.close());
+    this.closeBtn?.addEventListener('click',  () => this.close());
+    this.mask?.addEventListener('click',      () => this.close());
+    this.sendBtn?.addEventListener('click',   () => this._send());
+    this.input?.addEventListener('keydown',   e => { if (e.key === 'Enter') this._send(); });
 
-    // send on button or Enter
-    this.sendBtn?.addEventListener('click', () => this._send());
-    this.input?.addEventListener('keydown', e => { if (e.key === 'Enter') this._send(); });
+    // "Close task" button (shown when a session finishes)
+    this.closeTaskBtn = $('#xiaoyi-close-task');
+    this.closeTaskBtn?.addEventListener('click', () => this._closeCurrentSession());
 
-    // drag to resize / close panel
-    const dragBar = $('#xiaoyi-drag-bar');
-    if (dragBar) {
-      let sy = 0;
-      let startRatio = this._sheetDefault;
-      let dragging = false;
+    // confirm dialog buttons
+    this._confirmYes?.addEventListener('click', () => this._respondConfirm(true));
+    this._confirmNo?.addEventListener('click',  () => this._respondConfirm(false));
+    this._confirmDialog?.querySelector('#confirm-overlay')
+      ?.addEventListener('click', () => this._respondConfirm(false));
 
-      dragBar.addEventListener('mousedown', e => {
-        if (!this._open) return;
-        sy = e.clientY;
-        startRatio = this._sheetRatio;
-        dragging = true;
-        this._setSheetRatio(this._sheetRatio, true);
-        e.preventDefault();
-      });
-
-      window.addEventListener('mousemove', e => {
-        if (!dragging) return;
-        const body = $('#xiaoyi-body');
-        const metrics = this._screenMetrics();
-        if (!body || !metrics) return;
-        const delta = e.clientY - sy;
-        const nextRatio = clamp(startRatio - delta / metrics.height, this._sheetMin, this._sheetExpanded);
-        this._sheetRatio = nextRatio;
-        body.style.height = `${(nextRatio * 100).toFixed(1)}%`;
-        if (delta > 0 && startRatio <= this._sheetDefault + 0.02) {
-          const shift = Math.max(0, delta - 10);
-          body.style.transform = `translateY(${shift}px)`;
-          body.style.opacity = `${clamp(1 - shift / 380, 0.72, 1)}`;
-        } else {
-          body.style.transform = '';
-          body.style.opacity = '';
-        }
-      });
-
-      window.addEventListener('mouseup', e => {
-        if (!dragging) return;
-        dragging = false;
-        const body = $('#xiaoyi-body');
-        const delta = e.clientY - sy;
-        if (body) body.style.transition = '';
-
-        if (delta > 120 && startRatio <= this._sheetDefault + 0.02) {
-          this.close();
-          return;
-        }
-
-        if (delta < -60 || this._sheetRatio > (this._sheetDefault + this._sheetExpanded) / 2) {
-          this._setSheetRatio(this._sheetExpanded);
-          return;
-        }
-
-        if (delta > 36 && startRatio > this._sheetDefault + 0.04) {
-          this._setSheetRatio(this._sheetDefault);
-          return;
-        }
-
-        const nearExpanded = Math.abs(this._sheetRatio - this._sheetExpanded) < Math.abs(this._sheetRatio - this._sheetDefault);
-        this._setSheetRatio(nearExpanded ? this._sheetExpanded : this._sheetDefault);
-      });
-    }
-
-    // draggable bubble (stays on screen edges)
+    // drag-to-resize sheet
+    this._bindDragBar();
+    // draggable bubble
     this._makeBubbleDraggable();
     this.snapToEdge(true);
+    // boot with one empty default session
+    this._createDefaultSession();
+    // start polling
+    this._startPolling();
+    // bind track swipe
+    this._bindTrackSwipe();
   }
 
+  // ─────────────────────────────────────────────────────────────
+  // Session management
+  // ─────────────────────────────────────────────────────────────
+  _createDefaultSession() {
+    if (this.track) this.track.innerHTML = '';
+    const pane = this._buildPane();
+    this._appendWelcomeBubble(pane);
+    this._sessions = [{ id: null, cursor: 0, pane }];
+    this._current  = 0;
+    this.track?.appendChild(pane);
+    this._syncTrack();
+    this._syncDots();
+    this._syncInputRow();
+  }
+
+  _buildPane() {
+    const pane = el('div', 'xiaoyi-session-pane');
+    return pane;
+  }
+
+  _findSessionIndexById(sessionId) {
+    if (!sessionId) return -1;
+    return this._sessions.findIndex(session => session.id === sessionId);
+  }
+
+  _generateSessionId() {
+    if (window.crypto?.randomUUID) {
+      return `xiaoyi_${window.crypto.randomUUID()}`;
+    }
+    return `xiaoyi_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+  }
+
+  _canReuseDefaultSession() {
+    return this._sessions.length === 1 && !this._sessions[0]?.id;
+  }
+
+  _appendWelcomeBubble(pane) {
+    const div = el('div', 'xm xm-ai');
+    div.innerHTML = `<div class="xm-bubble">您好！我是小艺，您的智能助手 ✨<br>有什么可以帮您的吗？</div>`;
+    pane.appendChild(div);
+  }
+
+  /** Create a new backend-linked session (after user sends a message). */
+  _startSession(sessionId) {
+    const pane = this._buildPane();
+    const session = { id: sessionId, cursor: 0, pane };
+    this._sessions.push(session);
+    this.track?.appendChild(pane);
+    this._current = this._sessions.length - 1;
+    this._syncTrack(true);
+    this._syncDots();
+    return session;
+  }
+
+  _switchTo(index) {
+    if (index < 0 || index >= this._sessions.length) return;
+    this._current = index;
+    this._syncTrack(true);
+    this._syncDots();
+    this._syncInputRow();
+  }
+
+  /** Sync the input row visibility.
+   *  - No task: show input + send button.
+   *  - Task running, no pending ask: show only "close task" button.
+   *  - Task running, pending ask: show input + send (for reply) AND "close task". */
+  _syncInputRow() {
+    const session     = this._sessions[this._current];
+    const hasTask     = !!(session?.id);
+    const pendingAsk  = !!(session?._pendingAsk);
+    const showInput   = !hasTask || pendingAsk;
+    if (this.input)        this.input.style.display   = showInput ? '' : 'none';
+    if (this.sendBtn)      this.sendBtn.style.display  = showInput ? '' : 'none';
+    if (this.closeTaskBtn) this.closeTaskBtn.classList.toggle('hidden', !hasTask);
+  }
+
+  /** Cancel the backend task then remove the session from the carousel. */
+  async _closeCurrentSession() {
+    const idx     = this._current;
+    const session = this._sessions[idx];
+    if (!session) return;
+    const sessionId = session.id || null;
+
+    // If a confirm dialog is open for this session, dismiss it immediately.
+    if (this._pendingConfirm?.sessionId === sessionId) {
+      this._pendingConfirm = null;
+      this._confirmDialog?.classList.add('hidden');
+    }
+
+    // Cancel any running backend task (also unblocks pending confirms / asks).
+    if (sessionId) {
+      this._closedSessions.add(sessionId);   // never re-adopt this ID
+      try {
+        await fetch('/api/assistant/cancel', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ session_id: sessionId }),
+        });
+      } catch { /* best-effort */ }
+    }
+
+    this._sessions = this._sessions.filter((item, itemIdx) => {
+      const shouldRemove = sessionId ? item.id === sessionId : itemIdx === idx;
+      if (shouldRemove) item.pane?.remove();
+      return !shouldRemove;
+    });
+
+    if (this._sessions.length === 0) {
+      this._createDefaultSession();
+    } else {
+      this._current = Math.min(idx, this._sessions.length - 1);
+      this._syncTrack(false);
+      this._syncDots();
+      this._syncInputRow();
+    }
+  }
+
+  /** Adopt a session that was created externally (e.g. by the AIOS listener).
+   *  Creates a new pane, opens the panel, and immediately polls for messages. */
+  _adoptExternalSession(sessionId) {
+    if (!sessionId || this._closedSessions.has(sessionId)) return null;
+
+    const existingIdx = this._findSessionIndexById(sessionId);
+    if (existingIdx !== -1) {
+      const existing = this._sessions[existingIdx];
+      this._current = existingIdx;
+      this._syncTrack(true);
+      this._syncDots();
+      this._syncInputRow();
+      if (!this._open) this.open();
+      this._pollSession(existing);
+      return existing;
+    }
+
+    let session = null;
+    if (this._canReuseDefaultSession()) {
+      session = this._sessions[0];
+      session.id = sessionId;
+      session.cursor = 0;
+      session._done = false;
+      session._pendingAsk = null;
+      session.pane.innerHTML = '';
+      this._current = 0;
+    } else {
+      const pane = this._buildPane();
+      session = { id: sessionId, cursor: 0, pane };
+      this._sessions.push(session);
+      this.track?.appendChild(pane);
+      this._current = this._sessions.length - 1;
+    }
+
+    this._syncTrack(true);
+    this._syncDots();
+    this._syncInputRow();
+    if (!this._open) this.open();
+    // Immediately fetch any messages already queued on the server
+    // (the incoming message label + content are in session.messages from server-side push).
+    this._pollSession(session);
+    return session;
+  }
+
+  /** Poll one session immediately (outside the regular 1.5s tick). */
+  async _pollSession(session) {
+    try {
+      const url = `/api/assistant/poll?session_id=${encodeURIComponent(session.id)}&cursor=${session.cursor}`;
+      const r   = await fetch(url);
+      if (!r.ok) return;
+      const data = await r.json();
+      if (!data.found) return;
+      session.cursor = data.cursor;
+      for (const msg of data.messages) this._renderMsg(session, msg);
+      if (data.status === 'done' && !session._done) {
+        session._done = true;
+        this._onSessionDone(session);
+      }
+    } catch { /* network glitch — skip */ }
+  }
+
+  _syncTrack(animated = false) {
+    if (!this.track) return;
+    const offset = this._current * 100;
+    if (animated) {
+      this.track.style.transition = 'transform .3s cubic-bezier(.25,.46,.45,.94)';
+      // clear after transition
+      const clear = () => { this.track.style.transition = ''; this.track.removeEventListener('transitionend', clear); };
+      this.track.addEventListener('transitionend', clear, { once: true });
+    } else {
+      this.track.style.transition = 'none';
+    }
+    this.track.style.transform = `translateX(-${offset}%)`;
+  }
+
+  _syncDots() {
+    if (!this.dotsEl) return;
+    this.dotsEl.innerHTML = '';
+    if (this._sessions.length <= 1) return;
+    this._sessions.forEach((_, i) => {
+      const dot = el('div', `xsd-dot${i === this._current ? ' is-active' : ''}`);
+      dot.addEventListener('click', () => this._switchTo(i));
+      this.dotsEl.appendChild(dot);
+    });
+  }
+
+  _currentPane() {
+    return this._sessions[this._current]?.pane || null;
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Polling
+  // ─────────────────────────────────────────────────────────────
+  _startPolling() {
+    if (this._pollTimer) clearInterval(this._pollTimer);
+    this._pollTimer = setInterval(() => this._pollAll(), 1500);
+  }
+
+  async _pollAll() {
+    await this._discoverSessions();
+    for (const session of this._sessions) {
+      if (!session.id) continue;
+      if (session._done) continue;
+      try {
+        const url = `/api/assistant/poll?session_id=${encodeURIComponent(session.id)}&cursor=${session.cursor}`;
+        const r   = await fetch(url);
+        if (!r.ok) continue;
+        const data = await r.json();
+        if (!data.found) continue;
+
+        session.cursor = data.cursor;
+        for (const msg of data.messages) {
+          this._renderMsg(session, msg);
+        }
+        if (data.status === 'done' && !session._done) {
+          session._done = true;
+          this._onSessionDone(session);
+        }
+      } catch { /* network glitch — skip */ }
+    }
+  }
+
+  /** Detect sessions created externally (e.g. by aios_listener) and adopt them. */
+  async _discoverSessions() {
+    try {
+      const r = await fetch('/api/assistant/sessions');
+      if (!r.ok) return;
+      const { sessions: list } = await r.json();
+      const knownIds = new Set(this._sessions.map(s => s.id).filter(Boolean));
+      for (const { id, status } of list) {
+        // Only adopt sessions that are actively running and not yet known.
+        // Skipping done sessions prevents stale/old sessions from being
+        // re-adopted as empty pages after a page reload.
+        if (status === 'running' && !knownIds.has(id) && !this._closedSessions.has(id)) {
+          this._adoptExternalSession(id);
+        }
+      }
+    } catch { /* network glitch — skip */ }
+  }
+
+  _onSessionDone(session) {
+    // Show a completion label.
+    this._renderMsg(session, { type: 'system', text: '✅ 小艺已完成任务' });
+
+    // Switch the input row to the "close task" button for this session.
+    const idx = this._sessions.indexOf(session);
+    if (idx === this._current) this._syncInputRow();
+  }
+
+  _renderMsg(session, msg) {
+    const pane = session.pane;
+    if (!pane) return;
+
+    if (msg.type === 'system') {
+      const row = el('div', 'xm xm-system');
+      row.innerHTML = `<span class="xm-system-label">${escapeHTML(msg.text)}</span>`;
+      pane.appendChild(row);
+
+    } else if (msg.type === 'ai') {
+      const div = el('div', 'xm xm-ai');
+      const safe = DOMPurify.sanitize(
+        marked.parse ? marked.parse(msg.text) : marked(msg.text),
+        { USE_PROFILES: { html: true } }
+      );
+      div.innerHTML = `<div class="xm-bubble">${safe}</div>`;
+      pane.appendChild(div);
+      // open panel if not already
+      if (!this._open) this.open();
+
+    } else if (msg.type === 'confirm') {
+      // Only show the dialog if this session is still active (not closed/cancelled).
+      if (this._sessions.includes(session)) {
+        this._showConfirmDialog(session.id, msg.prompt, msg.details);
+      }
+
+    } else if (msg.type === 'ask') {
+      // Show the question as an AI bubble and mark the session as awaiting reply.
+      const div = el('div', 'xm xm-ai');
+      div.innerHTML = `<div class="xm-bubble">${escapeHTML(msg.text)}</div>`;
+      pane.appendChild(div);
+      session._pendingAsk = msg.id;
+      if (!this._open) this.open();
+      // Reveal the input box so the user can type their reply.
+      const idx = this._sessions.indexOf(session);
+      if (idx === this._current) this._syncInputRow();
+    }
+
+    pane.scrollTop = pane.scrollHeight;
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Confirm dialog
+  // ─────────────────────────────────────────────────────────────
+  _showConfirmDialog(sessionId, prompt, details) {
+    if (!this._confirmDialog) return;
+    this._pendingConfirm = { sessionId };
+    if (this._confirmPromptEl)  this._confirmPromptEl.textContent  = prompt || '';
+    if (this._confirmDetailsEl) this._confirmDetailsEl.textContent = details || '';
+    this._confirmDialog.classList.remove('hidden');
+  }
+
+  async _respondConfirm(answer) {
+    if (!this._pendingConfirm) return;
+    const { sessionId } = this._pendingConfirm;
+    this._pendingConfirm = null;
+    this._confirmDialog?.classList.add('hidden');
+    try {
+      await fetch('/api/assistant/confirm', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ session_id: sessionId, answer }),
+      });
+    } catch { /* best-effort */ }
+    // show user choice as a system label
+    const session = this._sessions.find(s => s.id === sessionId);
+    if (session) {
+      const label = answer ? '✅ 已确认' : '❌ 已取消';
+      this._renderMsg(session, { type: 'system', text: label });
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Sending a message → reply to pending ask OR start a new AIOS session
+  // ─────────────────────────────────────────────────────────────
+  async _send() {
+    const msg = this.input?.value?.trim();
+    if (!msg) return;
+    if (this.input) this.input.value = '';
+
+    // If the current session is waiting for a free-text reply, route it back.
+    const currentSession = this._sessions[this._current];
+    if (currentSession?.id && currentSession._pendingAsk) {
+      currentSession._pendingAsk = null;
+      this._syncInputRow();   // hide input again while agent continues
+      // Show user bubble in the current pane.
+      const userDiv = el('div', 'xm xm-user');
+      userDiv.innerHTML = `<div class="xm-bubble">${escapeHTML(msg)}</div>`;
+      currentSession.pane?.appendChild(userDiv);
+      currentSession.pane.scrollTop = currentSession.pane.scrollHeight;
+      try {
+        await fetch('/api/assistant/reply', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ session_id: currentSession.id, text: msg }),
+        });
+      } catch { /* best-effort */ }
+      return;
+    }
+
+    // Remove the default welcome pane if it was never assigned a session
+    const defaultIdx = this._sessions.findIndex(s => !s.id);
+    if (defaultIdx !== -1) {
+      const defaultPane = this._sessions[defaultIdx].pane;
+      this._sessions.splice(defaultIdx, 1);
+      defaultPane?.remove();
+    }
+
+    // Build a new pane and immediately show the user message
+    const pane = this._buildPane();
+    const userDiv = el('div', 'xm xm-user');
+    userDiv.innerHTML = `<div class="xm-bubble">${escapeHTML(msg)}</div>`;
+    pane.appendChild(userDiv);
+
+    // Typing indicator
+    const typing = el('div', 'xm xm-typing');
+    typing.innerHTML = '<div class="xm-bubble">…</div>';
+    pane.appendChild(typing);
+
+    const clientSessionId = this._generateSessionId();
+    const tmpSession = { id: clientSessionId, cursor: 0, pane };
+    this._sessions.push(tmpSession);
+    this.track?.appendChild(pane);
+    this._current = this._sessions.length - 1;
+    this._syncTrack(true);
+    this._syncDots();
+    this._syncInputRow();
+
+    let data = null;
+    try {
+      const r = await fetch('/api/assistant', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ message: msg, session_id: clientSessionId }),
+      });
+      data = await r.json();
+    } catch (e) {
+      typing?.remove();
+      this._renderMsg(tmpSession, { type: 'ai', text: `❌ 连接失败：${e.message}` });
+      return;
+    }
+
+    typing?.remove();
+
+    if (data?.session_id) {
+      tmpSession.id = data.session_id;
+      this._renderMsg(tmpSession, { type: 'system', text: '小艺已接收任务，正在处理…' });
+      this._syncInputRow();
+    } else {
+      this._renderMsg(tmpSession, { type: 'ai', text: data?.message || '（未知错误）' });
+    }
+
+    this._syncDots();
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // Panel open / close
+  // ─────────────────────────────────────────────────────────────
   toggle() { this._open ? this.close() : this.open(); }
 
   open() {
     this._open = true;
     this.panel.classList.remove('hidden');
     const body = $('#xiaoyi-body');
-    if (body) {
-      body.style.transform = '';
-      body.style.opacity = '';
-    }
+    if (body) { body.style.transform = ''; body.style.opacity = ''; }
     this._setSheetRatio(this._sheetRatio || this._sheetDefault);
     this.input?.focus();
   }
@@ -2457,38 +2847,151 @@ class XiaoYiAssistant {
     this._sheetRatio = this._sheetDefault;
     if (body) {
       body.style.transform = '';
-      body.style.opacity = '';
-      body.style.height = `${(this._sheetDefault * 100).toFixed(1)}%`;
+      body.style.opacity   = '';
+      body.style.height    = `${(this._sheetDefault * 100).toFixed(1)}%`;
     }
     this.panel.classList.add('hidden');
   }
 
-  // ── AIOS HOOK ──────────────────────────────────────────────────
-  // Replace this method to wire into aios_demo.py / aios_listener.py
-  async _send() {
-    const msg = this.input?.value?.trim();
-    if (!msg) return;
-    if (this.input) this.input.value = '';
-    this._appendMsg(msg, 'user');
-    this._appendMsg('…', 'typing');
+  // ─────────────────────────────────────────────────────────────
+  // Session track swipe (left / right)
+  // ─────────────────────────────────────────────────────────────
+  _bindTrackSwipe() {
+    const track = this.track;
+    if (!track) return;
 
-    // Interface hook: POST to /api/assistant
-    // Future: stream responses from Soul Agent → Workforce
-    const data = await this.os.ds.post('assistant', { message: msg, mode: 'active' });
+    let sx = 0, sy = 0, startIdx = 0, dragging = false, moved = false, dirLocked = null;
+    const THRESHOLD = 40;
+    const DIR_LOCK_DIST = 8;
 
-    // remove typing indicator
-    const typing = this.msgWrap?.querySelector('.xm-typing');
-    if (typing) typing.remove();
+    const onStart = (cx, cy) => {
+      sx = cx; sy = cy; startIdx = this._current;
+      dragging = true; moved = false; dirLocked = null;
+      track.style.transition = 'none';
+    };
 
-    this._appendMsg(data?.reply || '（接口未接入）', 'ai');
+    // Returns true if the horizontal swipe was consumed (caller should preventDefault).
+    const onMove = (cx, cy) => {
+      if (!dragging) return false;
+      const dx = cx - sx;
+      const dy = cy - sy;
+
+      // Lock gesture direction once the finger has moved enough.
+      if (!dirLocked && (Math.abs(dx) > DIR_LOCK_DIST || Math.abs(dy) > DIR_LOCK_DIST)) {
+        dirLocked = Math.abs(dx) >= Math.abs(dy) ? 'h' : 'v';
+        if (dirLocked === 'v') {
+          // Vertical scroll — release the drag and let the pane scroll natively.
+          dragging = false;
+          return false;
+        }
+      }
+
+      if (dirLocked !== 'h') return false;
+
+      if (Math.abs(dx) > 6) moved = true;
+      const base = startIdx * 100;
+      const w = track.offsetWidth || 393;
+
+      // Apply rubber-band resistance at boundaries so no blank space bleeds through.
+      const atLeft  = startIdx === 0 && dx > 0;
+      const atRight = startIdx === this._sessions.length - 1 && dx < 0;
+      const effectiveDx = (atLeft || atRight) ? dx * 0.15 : dx;
+
+      track.style.transform = `translateX(calc(-${base}% + ${clamp(effectiveDx, -w, w)}px))`;
+      return true;
+    };
+
+    const onEnd = (cx) => {
+      if (!dragging) return;
+      dragging = false;
+      const dx = cx - sx;
+      if (moved && dx < -THRESHOLD) {
+        if (startIdx < this._sessions.length - 1) {
+          // Navigate to next existing session.
+          this._current = startIdx + 1;
+          this._syncInputRow();
+        }
+        // At last session: snap back silently.
+      } else if (moved && dx > THRESHOLD && startIdx > 0) {
+        this._current = startIdx - 1;
+        this._syncInputRow();
+      }
+      this._syncTrack(true);
+      this._syncDots();
+    };
+
+    // Mouse (desktop) — direction detection not needed; mouse wheel handles vertical scroll.
+    track.addEventListener('mousedown', e => { onStart(e.clientX, e.clientY); e.preventDefault(); });
+    window.addEventListener('mousemove', e => { if (dragging) onMove(e.clientX, e.clientY); });
+    window.addEventListener('mouseup',   e => { if (dragging) onEnd(e.clientX); });
+
+    // Touch — must determine direction before preventing default scroll.
+    track.addEventListener('touchstart', e => {
+      const t = e.touches[0]; if (t) onStart(t.clientX, t.clientY);
+    }, { passive: true });
+    track.addEventListener('touchmove', e => {
+      const t = e.touches[0];
+      if (t) {
+        const consumed = onMove(t.clientX, t.clientY);
+        if (consumed) e.preventDefault();
+      }
+    }, { passive: false });
+    track.addEventListener('touchend', e => {
+      const t = e.changedTouches[0]; if (t) onEnd(t.clientX);
+    });
   }
 
-  _appendMsg(text, type) {
-    if (!this.msgWrap) return;
-    const div = el('div', `xm xm-${type==='user'?'user':type==='typing'?'typing':'ai'}`);
-    div.innerHTML = `<div class="xm-bubble">${text}</div>`;
-    this.msgWrap.appendChild(div);
-    this.msgWrap.scrollTop = this.msgWrap.scrollHeight;
+  // ─────────────────────────────────────────────────────────────
+  // Drag-bar resize / pull-down-to-close
+  // ─────────────────────────────────────────────────────────────
+  _bindDragBar() {
+    const dragBar = $('#xiaoyi-drag-bar');
+    if (!dragBar) return;
+    let sy = 0, startRatio = this._sheetDefault, dragging = false;
+
+    dragBar.addEventListener('mousedown', e => {
+      if (!this._open) return;
+      sy = e.clientY; startRatio = this._sheetRatio; dragging = true;
+      this._setSheetRatio(this._sheetRatio, true);
+      e.preventDefault();
+    });
+
+    window.addEventListener('mousemove', e => {
+      if (!dragging) return;
+      const body = $('#xiaoyi-body');
+      const metrics = this._screenMetrics();
+      if (!body || !metrics) return;
+      const delta = e.clientY - sy;
+      const nextRatio = clamp(startRatio - delta / metrics.height, this._sheetMin, this._sheetExpanded);
+      this._sheetRatio = nextRatio;
+      body.style.height = `${(nextRatio * 100).toFixed(1)}%`;
+      if (delta > 0 && startRatio <= this._sheetDefault + 0.02) {
+        const shift = Math.max(0, delta - 10);
+        body.style.transform = `translateY(${shift}px)`;
+        body.style.opacity   = `${clamp(1 - shift / 380, 0.72, 1)}`;
+      } else {
+        body.style.transform = '';
+        body.style.opacity   = '';
+      }
+    });
+
+    window.addEventListener('mouseup', e => {
+      if (!dragging) return;
+      dragging = false;
+      const body = $('#xiaoyi-body');
+      const delta = e.clientY - sy;
+      if (body) body.style.transition = '';
+
+      if (delta > 120 && startRatio <= this._sheetDefault + 0.02) { this.close(); return; }
+      if (delta < -60 || this._sheetRatio > (this._sheetDefault + this._sheetExpanded) / 2) {
+        this._setSheetRatio(this._sheetExpanded); return;
+      }
+      if (delta > 36 && startRatio > this._sheetDefault + 0.04) {
+        this._setSheetRatio(this._sheetDefault); return;
+      }
+      const nearExp = Math.abs(this._sheetRatio - this._sheetExpanded) < Math.abs(this._sheetRatio - this._sheetDefault);
+      this._setSheetRatio(nearExp ? this._sheetExpanded : this._sheetDefault);
+    });
   }
 
   _setSheetRatio(ratio, immediate = false) {
@@ -2496,92 +2999,65 @@ class XiaoYiAssistant {
     this._sheetRatio = clamp(ratio, this._sheetMin, this._sheetExpanded);
     if (!body) return;
     body.style.transition = immediate ? 'none' : '';
-    body.style.height = `${(this._sheetRatio * 100).toFixed(1)}%`;
-    body.style.transform = '';
-    body.style.opacity = '';
+    body.style.height     = `${(this._sheetRatio * 100).toFixed(1)}%`;
+    body.style.transform  = '';
+    body.style.opacity    = '';
     if (immediate) {
-      requestAnimationFrame(() => {
-        if (body) body.style.transition = '';
-      });
+      requestAnimationFrame(() => { if (body) body.style.transition = ''; });
     }
   }
 
-  // External: called by AIOS when a response streams in
-  receiveMessage(text) {
-    this.open();
-    this._appendMsg(text, 'ai');
-  }
-
+  // ─────────────────────────────────────────────────────────────
+  // Bubble dragging / snap-to-edge
+  // ─────────────────────────────────────────────────────────────
   _screenMetrics() {
     const screen = this.screen || $('#screen');
     if (!screen) return null;
     const rect = screen.getBoundingClientRect();
-    const width = screen.clientWidth || screen.offsetWidth || rect.width;
+    const width  = screen.clientWidth  || screen.offsetWidth  || rect.width;
     const height = screen.clientHeight || screen.offsetHeight || rect.height;
-    return {
-      screen,
-      rect,
-      width,
-      height,
-      scaleX: width ? rect.width / width : 1,
-      scaleY: height ? rect.height / height : 1,
-    };
+    return { screen, rect, width, height,
+      scaleX: width  ? rect.width  / width  : 1,
+      scaleY: height ? rect.height / height : 1 };
   }
 
   snapToEdge(force = false) {
     const metrics = this._screenMetrics();
     if (!metrics || !this.bubble) return;
-
-    const bw = this.bubble.offsetWidth;
-    const bh = this.bubble.offsetHeight;
-    const margin = 10;
-    const topLimit = 90;
-    const bottomLimit = 132;
-
-    let left = this.bubble.offsetLeft;
-    let top = this.bubble.offsetTop;
+    const bw = this.bubble.offsetWidth, bh = this.bubble.offsetHeight;
+    const margin = 10, topLimit = 90, bottomLimit = 132;
+    let left = this.bubble.offsetLeft, top = this.bubble.offsetTop;
     if (force && !this.bubble.style.left && !this.bubble.style.top) {
       left = metrics.width - bw - margin;
-      top = clamp(metrics.height * 0.42, topLimit, metrics.height - bh - bottomLimit);
+      top  = clamp(metrics.height * 0.42, topLimit, metrics.height - bh - bottomLimit);
     }
-
     left = left + bw / 2 < metrics.width / 2 ? margin : metrics.width - bw - margin;
-    top = clamp(top, topLimit, metrics.height - bh - bottomLimit);
-
-    this.bubble.style.right = 'unset';
+    top  = clamp(top, topLimit, metrics.height - bh - bottomLimit);
+    this.bubble.style.right  = 'unset';
     this.bubble.style.bottom = 'unset';
-    this.bubble.style.left = `${left}px`;
-    this.bubble.style.top = `${top}px`;
+    this.bubble.style.left   = `${left}px`;
+    this.bubble.style.top    = `${top}px`;
   }
 
   _makeBubbleDraggable() {
     let sx, sy, ox, oy, scaleX = 1, scaleY = 1, dragging = false;
 
     const onStart = (clientX, clientY) => {
-      const metrics = this._screenMetrics();
-      if (!metrics) return;
+      const m = this._screenMetrics(); if (!m) return;
       sx = clientX; sy = clientY;
-      ox = this.bubble.offsetLeft;
-      oy = this.bubble.offsetTop;
-      scaleX = metrics.scaleX || 1;
-      scaleY = metrics.scaleY || 1;
+      ox = this.bubble.offsetLeft; oy = this.bubble.offsetTop;
+      scaleX = m.scaleX || 1; scaleY = m.scaleY || 1;
       this.bubble.style.transition = 'none';
       dragging = true;
     };
 
     const onMove = (clientX, clientY) => {
       if (!dragging) return;
-      const metrics = this._screenMetrics();
-      if (!metrics) return;
-      const dx = (clientX - sx) / scaleX;
-      const dy = (clientY - sy) / scaleY;
-      this._dy = dy;
-      const bw = this.bubble.offsetWidth;
-      const bh = this.bubble.offsetHeight;
-      let nx = ox + dx;
-      let ny = oy + dy;
-      nx = Math.max(0, Math.min(metrics.width - bw, nx));
-      ny = Math.max(0, Math.min(metrics.height - bh, ny));
+      const m = this._screenMetrics(); if (!m) return;
+      const dx = (clientX - sx) / scaleX, dy = (clientY - sy) / scaleY;
+      const bw = this.bubble.offsetWidth, bh = this.bubble.offsetHeight;
+      let nx = clamp(ox + dx, 0, m.width  - bw);
+      let ny = clamp(oy + dy, 0, m.height - bh);
       this.bubble.style.right  = 'unset';
       this.bubble.style.bottom = 'unset';
       this.bubble.style.left   = nx + 'px';
@@ -2593,34 +3069,32 @@ class XiaoYiAssistant {
       dragging = false;
       this.bubble.style.transition = '';
       this.snapToEdge();
-      // if barely moved → treat as tap
       const totalDx = Math.abs((clientX - sx) / scaleX);
       const totalDy = Math.abs((clientY - sy) / scaleY);
-      if (totalDx < 8 && totalDy < 8) {
-        this.toggle();
-      }
+      if (totalDx < 8 && totalDy < 8) this.toggle();
     };
 
-    // ── Mouse ─────────────────────────────────────────────────────
     this.bubble.addEventListener('mousedown', e => { onStart(e.clientX, e.clientY); e.preventDefault(); });
     window.addEventListener('mousemove', e => onMove(e.clientX, e.clientY));
     window.addEventListener('mouseup',   e => onEnd(e.clientX, e.clientY));
 
-    // ── Touch (mobile) ────────────────────────────────────────────
     this.bubble.addEventListener('touchstart', e => {
-      const t = e.touches[0];
-      if (!t) return;
-      onStart(t.clientX, t.clientY);
-      e.preventDefault();
+      const t = e.touches[0]; if (!t) return;
+      onStart(t.clientX, t.clientY); e.preventDefault();
     }, { passive: false });
     window.addEventListener('touchmove', e => {
-      const t = e.touches[0];
-      if (t) onMove(t.clientX, t.clientY);
+      const t = e.touches[0]; if (t) onMove(t.clientX, t.clientY);
     }, { passive: false });
     window.addEventListener('touchend', e => {
-      const t = e.changedTouches[0];
-      if (t) onEnd(t.clientX, t.clientY);
+      const t = e.changedTouches[0]; if (t) onEnd(t.clientX, t.clientY);
     });
+  }
+
+  // External: open panel and inject an incoming AI message (used by notification path)
+  receiveMessage(text) {
+    this.open();
+    const session = this._sessions[this._current];
+    if (session) this._renderMsg(session, { type: 'ai', text });
   }
 }
 
@@ -3676,6 +4150,7 @@ class ORCAOS {
   }
 
   _startNotifPolling() {
+    // Poll OS notifications (popups)
     setInterval(async () => {
       try {
         const data = await this.ds.get('notifications', true);

@@ -7,6 +7,11 @@ import os
 
 logger = get_logger(__name__)
 
+try:
+    from demo.os_view import ui_bridge as _ui_bridge
+except ImportError:
+    _ui_bridge = None
+
 
 class XiaoHongShuToolkit(BaseToolkit):
     """Toolkit for XiaoHongShu Agent"""
@@ -40,6 +45,8 @@ class XiaoHongShuToolkit(BaseToolkit):
             - It does not expose raw platform data or account information.
         """
         print(f"Asking Xiaohongshu App with the question of {query}")
+        if _ui_bridge:
+            _ui_bridge.push_system_message("小艺正在向小红书咨询您的创作风格与偏好…")
         path = Path(self.soul_path).resolve()
         with open(path, encoding="utf-8") as soul:
             return soul.read()
@@ -62,9 +69,16 @@ class XiaoHongShuToolkit(BaseToolkit):
         print(f"  Title  : {title}")
         print(f"  Content: {text}")
         print(f"  Images : {image_paths}")
-        confirm = input("Publish this post? (yes / no): ").strip().lower()
-        if confirm not in ("yes", "y"):
-            return {"status": "cancelled", "message": f"User declined to send the message and said: {confirm}"}
+        if _ui_bridge and _ui_bridge.get_session_id():
+            confirmed = _ui_bridge.request_confirm(
+                f"发布小红书笔记《{title}》",
+                details=text[:120] + ("…" if len(text) > 120 else ""),
+            )
+        else:
+            answer = input("Publish this post? (yes / no): ").strip().lower()
+            confirmed = answer in ("yes", "y")
+        if not confirmed:
+            return {"status": "cancelled", "message": "User declined to publish the post."}
 
         logger.info(f"Publishing Xiaohongshu Post...")
         post = {

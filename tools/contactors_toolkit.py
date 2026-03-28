@@ -9,6 +9,11 @@ from loguru import logger
 
 from tools.communication_recorder import record_message
 
+try:
+    from demo.os_view import ui_bridge as _ui_bridge
+except ImportError:
+    _ui_bridge = None
+
 
 class ContactorsToolkit(BaseToolkit):
     """
@@ -61,6 +66,8 @@ class ContactorsToolkit(BaseToolkit):
                  communication tone guidance.
         """
         logger.info(f"Fetching contactors app profiles for: {query}")
+        if _ui_bridge:
+            _ui_bridge.push_system_message("小艺正在向通讯录询问联系人信息…")
         try:
             with open(self.profiles_path, encoding="utf-8") as f:
                 data = json.load(f)
@@ -109,9 +116,16 @@ class ContactorsToolkit(BaseToolkit):
                   {"status": "error",     "message": ...}
         """
         print(f"\nContactors app wants to send a message to {target_host}:{target_port}:\n  <{msg}>")
-        confirm = input("Send this message? (yes / no): ").strip().lower()
-        if confirm not in ("yes", "y"):
-            return {"status": "cancelled", "message": f"User declined to send the message and said: {confirm}"}
+        if _ui_bridge and _ui_bridge.get_session_id():
+            confirmed = _ui_bridge.request_confirm(
+                f"发送消息给 {target_host}:{target_port}",
+                details=msg,
+            )
+        else:
+            answer = input("Send this message? (yes / no): ").strip().lower()
+            confirmed = answer in ("yes", "y")
+        if not confirmed:
+            return {"status": "cancelled", "message": "User declined to send the message."}
 
         try:
             asyncio.get_running_loop()

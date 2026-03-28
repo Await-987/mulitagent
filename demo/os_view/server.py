@@ -2,7 +2,7 @@
 ORCA OS View — Flask backend
 Run: pip install flask flask-cors
      python demo/os_view/server.py
-Then open: http://127.0.0.1:5001 or http://<LAN-IP>:5001
+Then open: http://127.0.0.1:<ORCA_PORT> (default 5001, set ORCA_PORT in .env)
 """
 from flask import Flask, jsonify, send_file, request, send_from_directory, abort
 from flask_cors import CORS
@@ -11,15 +11,40 @@ from urllib.parse import quote
 from pathlib import Path
 from datetime import datetime
 
+# ── Paths (computed early so .env is loaded before PORT is read) ──────────
+THIS_DIR = Path(__file__).parent
+DEMO_DIR = THIS_DIR.parent
+ROOT_DIR = DEMO_DIR.parent
+
+# Load .env from project root so ORCA_PORT (and API keys) are available.
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    _load_dotenv(ROOT_DIR / '.env')
+except ImportError:
+    pass  # python-dotenv not installed — rely on shell environment
+
+# Pin CAMEL_WORKDIR to demo/working_dir/ so all agents use the correct path
+# regardless of the current working directory when server.py is launched.
+if 'CAMEL_WORKDIR' not in os.environ:
+    os.environ['CAMEL_WORKDIR'] = str(DEMO_DIR / 'working_dir')
+
+# ── Port configuration ────────────────────────────────────────────────────
+# To change the port: edit ORCA_PORT in .env (or set the env variable).
+PORT = int(os.environ.get('ORCA_PORT', 5001))
+
 app = Flask(__name__, static_folder='.', static_url_path='/static')
 CORS(app)
 
-THIS_DIR   = Path(__file__).parent
-DEMO_DIR   = THIS_DIR.parent
-ROOT_DIR   = DEMO_DIR.parent
-# Make project root importable (for agents/, tools/, etc.)
+# Make project root importable (for agents/, tools/, demo.os_view, etc.)
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
+
+# ui_bridge lives alongside server.py; fall back to direct import if the
+# package path isn't resolved yet (e.g. running as __main__).
+try:
+    from demo.os_view import ui_bridge as _ui_bridge
+except ImportError:
+    import ui_bridge as _ui_bridge
 MOCK_DIR   = ROOT_DIR / 'mock_data'
 WORK_DIR   = DEMO_DIR / 'working_dir'
 IMAGES_DIR = ROOT_DIR / 'images'
@@ -364,27 +389,97 @@ def api_search_reset():
         _search_sessions.pop(session_id, None)
     return jsonify({'ok': True})
 
-# ── Assistant / 小艺 (AIOS hook) ──────────────────────────────────────────
+# ── Assistant / 小艺 (AIOS integration) ──────────────────────────────────────
+def _run_aios_task(session_id: str, task_text: str) -> None:
+    """Thread target: run the full AIOS pipeline for one 小艺 session."""
+    # ContextVars don't propagate to new threads — set explicitly here.
+    _ui_bridge.set_session(session_id)
+    try:
+        from demo.aios_demo import main as _aios_main
+
+        async def _wrapped():
+            # Also set inside the coroutine context so asyncio sub-tasks inherit it.
+            _ui_bridge.set_session(session_id)
+            await _aios_main(task_text)
+
+        asyncio.run(_wrapped())
+    except Exception as exc:
+        _ui_bridge.push_ai_message(f'❌ 任务执行出错：{exc}')
+        _ui_bridge.mark_done()
+
+
 @app.route('/api/assistant', methods=['GET', 'POST'])
 def api_assistant():
     """
-    Interface hook for 小艺 assistant.
-    Future: POST message → Soul Agent → ORCA Workforce → reply.
-    Supports aios_demo.py (active) and aios_listener.py (passive) modes.
+    POST {message, session_id?}  → start a new AIOS task in a background thread.
+    GET                          → list current sessions.
     """
     if request.method == 'POST':
-        body    = request.get_json() or {}
-        message = body.get('message', '')
-        mode    = body.get('mode', 'active')   # 'active' | 'passive'
-        # TODO: route to aios_demo.py / aios_listener.py
-        return jsonify({
-            'status': 'mock',
-            'mode':   mode,
-            'reply':  (f'**小艺接口预留**\n\n'
-                       f'您说：{message}\n\n'
-                       f'接入 AIOS 后小艺将为您服务。'),
-        })
-    return jsonify({'status': 'ready'})
+        body            = request.get_json() or {}
+        message         = str(body.get('message', '')).strip()
+        session_id      = str(body.get('session_id', '')).strip() or None
+        display_sender  = str(body.get('display_sender',  '')).strip()
+        display_content = str(body.get('display_content', '')).strip()
+
+        if not message:
+            return jsonify({'status': 'error', 'message': '消息不能为空'})
+
+        new_sid = _ui_bridge.create_session(session_id)
+        # Push the incoming message directly by session_id (no ContextVar needed).
+        if display_content:
+            _ui_bridge.push_incoming_display(new_sid, display_sender, display_content)
+
+        t = threading.Thread(
+            target=_run_aios_task, args=(new_sid, message), daemon=True
+        )
+        t.start()
+        return jsonify({'status': 'started', 'session_id': new_sid})
+
+    # GET — return list of all sessions
+    return jsonify({'status': 'ready', 'sessions': _ui_bridge.list_sessions()})
+
+
+@app.route('/api/assistant/poll')
+def api_assistant_poll():
+    """GET ?session_id=xxx&cursor=0  → new messages since cursor."""
+    session_id = request.args.get('session_id', '')
+    cursor     = int(request.args.get('cursor', '0') or '0')
+    return jsonify(_ui_bridge.poll_messages(session_id, cursor))
+
+
+@app.route('/api/assistant/confirm', methods=['POST'])
+def api_assistant_confirm():
+    """POST {session_id, answer: true|false}  → unblock a pending confirmation."""
+    body       = request.get_json() or {}
+    session_id = str(body.get('session_id', '')).strip()
+    answer     = bool(body.get('answer', False))
+    ok = _ui_bridge.respond_confirm(session_id, answer)
+    return jsonify({'ok': ok})
+
+
+@app.route('/api/assistant/reply', methods=['POST'])
+def api_assistant_reply():
+    """POST {session_id, text}  → submit a free-text reply to a pending ask."""
+    body       = request.get_json() or {}
+    session_id = str(body.get('session_id', '')).strip()
+    text       = str(body.get('text', '')).strip()
+    ok = _ui_bridge.respond_ask(session_id, text)
+    return jsonify({'ok': ok})
+
+
+@app.route('/api/assistant/cancel', methods=['POST'])
+def api_assistant_cancel():
+    """POST {session_id}  → cancel a running or completed session."""
+    body       = request.get_json() or {}
+    session_id = str(body.get('session_id', '')).strip()
+    _ui_bridge.cancel_session(session_id)
+    return jsonify({'ok': True})
+
+
+@app.route('/api/assistant/sessions')
+def api_assistant_sessions():
+    """GET → [{id, status}] for all active sessions."""
+    return jsonify({'sessions': _ui_bridge.list_sessions()})
 
 # ── Notifications ─────────────────────────────────────────────────────────
 @app.route('/api/notifications')
@@ -412,6 +507,26 @@ def api_push():
         })
     return jsonify({'ok': True})
 
+# ── AIOS Listener (auto-start alongside the web server) ──────────────────
+def _start_listener() -> None:
+    """Start aios_listener.py as a subprocess so incoming D2D messages are
+    handled automatically whenever the OS View server is running."""
+    import subprocess, atexit
+    listener_script = DEMO_DIR / 'aios_listener.py'
+    if not listener_script.exists():
+        print('[Listener] aios_listener.py not found — skipping.')
+        return
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, str(listener_script)],
+            cwd=str(ROOT_DIR),
+        )
+        atexit.register(lambda: proc.terminate() if proc.poll() is None else None)
+        print(f'[Listener] Started (pid {proc.pid})')
+    except Exception as exc:
+        print(f'[Listener] Failed to start: {exc}')
+
+
 # ── Run ───────────────────────────────────────────────────────────────────
 if __name__ == '__main__':
     import socket as _socket
@@ -424,9 +539,11 @@ if __name__ == '__main__':
     except Exception:
         pass
 
+    _start_listener()
+
     print('\nORCA OS View')
-    print('  Local:   http://127.0.0.1:5001')
+    print(f'  Local:   http://127.0.0.1:{PORT}')
     if _lan_ip:
-        print(f'  Network: http://{_lan_ip}:5001')
+        print(f'  Network: http://{_lan_ip}:{PORT}')
     print()
-    app.run(host='0.0.0.0', debug=True, port=5001, use_reloader=False)
+    app.run(host='0.0.0.0', debug=True, port=PORT, use_reloader=False)

@@ -5,6 +5,11 @@ from typing import List
 from camel.toolkits import FunctionTool
 from camel.toolkits.base import BaseToolkit
 
+try:
+    from demo.os_view import ui_bridge as _ui_bridge
+except ImportError:
+    _ui_bridge = None
+
 
 class SoulToolkit(BaseToolkit):
     def __init__(self):
@@ -91,9 +96,16 @@ class SoulToolkit(BaseToolkit):
             print(f'\n[Soul Agent] Protected field "{key}" is about to be changed:')
             print(f'  Current : {current_soul.get(key)}')
             print(f'  New     : {parsed_value}')
-            confirm = input("Confirm this change? (yes/no): ").strip().lower()
-            if confirm not in ("yes", "y"):
-                return f'User declined to modify protected field "{key}". soul.json was not updated. The user said {confirm}.'
+            if _ui_bridge and _ui_bridge.get_session_id():
+                confirmed = _ui_bridge.request_confirm(
+                    f"修改重要字段「{key}」",
+                    details=f"当前值：{current_soul.get(key)}\n新值：{parsed_value}",
+                )
+            else:
+                answer = input("Confirm this change? (yes/no): ").strip().lower()
+                confirmed = answer in ("yes", "y")
+            if not confirmed:
+                return f'User declined to modify protected field "{key}". soul.json was not updated.'
 
         is_new_key = key not in current_soul
         current_soul[key] = parsed_value

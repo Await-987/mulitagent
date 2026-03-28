@@ -3,6 +3,12 @@ import os
 from camel.logger import get_logger
 from camel.societies.workforce import Workforce
 from camel.tasks.task import Task
+
+try:
+    from demo.os_view import ui_bridge as _bridge
+except ImportError:
+    _bridge = None
+
 from agents import (
     coordinator_agent_factory,
     task_agent_factory,
@@ -107,6 +113,8 @@ async def main(task: str = ""):
 
 
     print("AIOS received task:", original_task)
+    if _bridge:
+        _bridge.push_system_message("小艺正在结合您的个人档案理解任务…")
     soul_response = soul_agent.step(original_task)
     enriched_task_content = _get_response_content(soul_response)
     if not enriched_task_content or enriched_task_content == "(no response)":
@@ -114,12 +122,16 @@ async def main(task: str = ""):
         enriched_task_content = original_task
     print("AIOS is building the plan:\n", enriched_task_content)
 
+    if _bridge:
+        _bridge.push_system_message("小艺正在协调各应用处理您的任务…")
     human_task = Task(content=enriched_task_content, id='0')
     completed_task = await workforce.process_task_async(human_task)
 
     print("\n--- Task Execution Result ---")
     print(f"Status: {completed_task.state}")
     print(f"Result: {completed_task.result or '(no result)'}")
+    if _bridge and completed_task.result:
+        _bridge.push_ai_message(completed_task.result)
 
     print("\n--- Workforce Log Tree ---")
     print(workforce.get_workforce_log_tree())
@@ -135,6 +147,8 @@ async def main(task: str = ""):
 
     soul_agent.reset()
 
+    if _bridge:
+        _bridge.push_system_message("任务完成，正在更新个人档案…")
     soul_result = soul_agent.step(
         "The task has been completed by AIOS. "
         "Please use get_task_status to review the execution record and decide "
@@ -142,6 +156,8 @@ async def main(task: str = ""):
     )
     print("\n--- Soul Agent: Profile Update ---")
     print(_get_response_content(soul_result))
+    if _bridge:
+        _bridge.mark_done()
 
 
 if __name__ == "__main__":

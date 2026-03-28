@@ -173,11 +173,37 @@ python scripts/load_photos.py
 
 ### 4. 运行
 
-#### 模式一：用户主动发起任务
+#### 模式一：OS View 界面模式（推荐）
+
+启动仿鸿蒙手机界面，通过浏览器与 AIOS 交互：
 
 ```bash
-cd demo
-python aios_demo.py
+python demo/os_view/server.py
+```
+
+打开浏览器访问 **http://127.0.0.1:5001**（局域网内其他设备也可通过显示的 Network 地址访问，兼容手机浏览器）。
+
+界面功能：
+- **小艺助手**：点击屏幕右侧悬浮圆圈打开，输入任务后 AIOS 全流程在聊天框中实时呈现
+  - 居中的系统提示（灰色标签）：小艺正在询问哪个 App、协调进度等
+  - AI 气泡：workforce 执行结果和小艺的最终回复
+  - 支持多任务并行，左右滑动切换不同对话
+- **确认弹窗**：发送 D2D 消息、发布小红书、修改重要个人信息时，屏幕下方弹出确认框（绿色确认 / 红色取消）
+- **消息通知**：收到 D2D 来信时，屏幕顶部自动弹出横幅通知
+- **各 App 界面**：通讯录、备忘录、相册、小红书、携程、浏览器等均已集成真实数据
+
+**修改端口**：在 `.env` 中设置 `ORCA_PORT=xxxx`（默认 `5001`），`aios_listener.py` 会自动读取同一变量。
+
+> 若同时运行 `aios_listener.py`，收到的 D2D 消息会自动推送到界面并在小艺面板中展示任务进度。
+
+---
+
+#### 模式二：命令行任务模式
+
+无需界面，直接在终端运行，所有交互通过命令行完成：
+
+```bash
+python demo/aios_demo.py
 ```
 
 编辑 `demo/aios_demo.py` 底部的 `_task` 变量来自定义任务：
@@ -190,11 +216,12 @@ _task = "我去云南玩了，帮我看看相册有没有风景照，去携程�
 _task = "帮我问问艾华老师，下午几点开会来着"
 ```
 
-#### 模式二：D2D 消息监听
+需要用户确认的操作（如发送消息、发布帖子）会在命令行提示 `yes/no`。
+
+#### 模式三：D2D 消息监听
 
 ```bash
-cd demo
-python aios_listener.py
+python demo/aios_listener.py
 ```
 
 监听地址自动从 `mock_data/soul/soul.json` 的 `aios_phone_number` 字段读取。收到其他 ORCA 节点的消息后，系统会：
@@ -202,6 +229,8 @@ python aios_listener.py
 1. Soul Agent 结合用户档案和联系人背景进行个性化决策
 2. Workforce 查询相关 App 数据（备忘录、通讯录等）
 3. 以用户本人的语气和风格自动回复对方
+
+若 OS View 服务正在运行，Listener 会自动将任务路由到界面展示；否则回退到命令行模式。
 
 ---
 
@@ -232,8 +261,14 @@ orca/
 │   └── xiecheng_toolkit.py      # 携程查询
 │
 ├── demo/
-│   ├── aios_demo.py             # 用户主动发起任务的入口
-│   └── aios_listener.py         # D2D 消息监听入口
+│   ├── aios_demo.py             # 命令行任务入口
+│   ├── aios_listener.py         # D2D 消息监听入口
+│   └── os_view/                 # 仿鸿蒙手机界面
+│       ├── server.py            # Flask 后端（PORT 可在此修改，默认 5001）
+│       ├── index.html           # 手机壳 + 界面结构
+│       ├── main.js              # 系统逻辑（小艺多会话、确认弹窗、通知等）
+│       ├── style.css            # 玻璃态 iOS 风格样式
+│       └── ui_bridge.py        # AIOS ↔ 界面的消息/确认通信桥
 │
 ├── mock_data/                   # 活跃用户数据（当前身份）
 │   ├── soul/                    # 灵魂档案
