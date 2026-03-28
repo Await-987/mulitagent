@@ -65,8 +65,8 @@ async def main(task: str = ""):
         "Contactors Agent: Integrated within the AIOS Contacts app. Looks up contact "
         "profiles (phone numbers, relationship background, recommended communication "
         "tone) via get_contacts_profile, retrieves full message history via "
-        "get_message_history, sends D2D inquiries that await a reply via ask_tool, "
-        "and sends one-way D2D replies or notifications via tell_tool.",
+        "get_message_history, and sends D2D messages to contacts via communication_tool "
+        "(one-way delivery; the contact's AIOS may reply later via the listener).",
         worker=contactors_agent,
     ).add_single_agent_worker(
         "Notes Agent: Integrated within the AIOS Notes app. Retrieves the user's "
@@ -145,7 +145,7 @@ async def main(task: str = ""):
 
 
 if __name__ == "__main__":
-    _task = "帮我看看我昨天给宽带师傅打电话的时候，师傅怎么解决宽带问题的来着？"
+    # _task = "帮我看看我昨天给宽带师傅打电话的时候，师傅怎么解决宽带问题的来着？"
     # _task = "我去云南玩了，帮我看看相册有没有自拍照，然后去携程看看有没有对应的旅游攻略，写个帖子帮我发到我的小红书上面去。"
-    # _task = "帮我问问艾华老师，下午几点开会来着"
+    _task = "帮我问问艾华老师，下午几点开会来着"
     asyncio.run(main(_task))

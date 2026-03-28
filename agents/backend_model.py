@@ -7,8 +7,8 @@ load_dotenv()
 
 
 def backend_model():
-    api_key = os.getenv('OPENAI_API_KEY')
-    url = os.getenv('url')
+    # api_key = os.getenv('OPENAI_API_KEY')
+    # url = os.getenv('url')
 
     return ModelFactory.create(
         model_platform=ModelPlatformType.OPENAI_COMPATIBLE_MODEL,
@@ -30,8 +30,8 @@ def backend_model():
 
 
 def backend_model_image():
-    vl_api_key = os.getenv('QWEN_API_KEY')
-    vl_url = os.getenv('url_qwen')
+    # vl_api_key = os.getenv('QWEN_API_KEY')
+    # vl_url = os.getenv('url_qwen')
 
     return ModelFactory.create(
         model_platform=ModelPlatformType.OPENAI_COMPATIBLE_MODEL,

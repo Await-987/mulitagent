@@ -17,4 +17,4 @@
 
 ## 相册个性化内容
 
-“C:\\Users\\45092\\Desktop\\aios-aios_merge_0307\\mock_data\\photos\\张小宇.png”这张图片是本机AIOS机主张小宇的证件照。
+“C:\\Users\\45092\\Desktop\\temp_soul-main\\mock_data\\photos\\张小宇.png”这张图片是本机AIOS机主张小宇的证件照。

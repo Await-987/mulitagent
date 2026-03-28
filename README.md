@@ -57,7 +57,7 @@ ORCA 还支持 **设备间直连消息（D2D）**：不同用户的 ORCA 节点�
 
 ### D2D 通信协议
 
-- **双向设备直连**：基于 TCP 的 ORCA 节点间直连通信，支持请求-回复（`ask_tool`）和单向通知（`tell_tool`）两种模式。
+- **统一通信接口**：基于 TCP 的 ORCA 节点间直连通信，发送方通过 `communication_tool` 投递消息；对方若需回复，同样使用 `communication_tool` 发回，消息自动流入发送方的 ORCA Listener，无需轮询。
 - **自动化响应决策**：收到外部消息时，Soul Agent 结合用户档案和联系人背景自动决策是否回复、如何回复。
 - **消息历史记录**：所有 D2D 通信自动记录到通讯录历史，供后续个性化参考。
 
@@ -81,7 +81,7 @@ ORCA 还支持 **设备间直连消息（D2D）**：不同用户的 ORCA 节点�
 
 | 智能体 | 对应 App | 核心工具 |
 |--------|----------|----------|
-| **Contactors Agent** | 通讯录 | `get_contacts_profile` · `ask_tool` · `tell_tool` |
+| **Contactors Agent** | 通讯录 | `get_contacts_profile` · `communication_tool` |
 | **Notes Agent** | 备忘录 | `search_my_notes` |
 | **Photos Agent** | 相册 | `search_photos` · `get_image_information` |
 | **XiaoHongShu Agent** | 小红书 | `publish_xhs_post` |
@@ -121,7 +121,7 @@ npx playwright install
 ### 2. 配置 API Keys
 
 ```bash
-cp example.env .env
+cp .env .env
 ```
 
 编辑 `.env`：

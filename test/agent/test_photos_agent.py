@@ -8,8 +8,8 @@ def main():
     # Test queries
     test_queries = [
         # "相册里有哪些场景的照片？相同场景只需要说一次就好。",
-        "有哪些去云南的照片？写一个列表给我，包含照片的路径",
-        # "C:\\Users\\45092\\Desktop\\aios-aios_merge_0307\\mock_data\\photos\\上海外滩.png里面谁才是这个AIOS的机主？"
+        # "有哪些去云南的照片？写一个列表给我，包含照片的路径",
+        "C:\\Users\\45092\\Desktop\\ORCA\\mock_data\\photos\\上海外滩.png里面谁才是这个AIOS的机主？"
     ]
 
     for query in test_queries:

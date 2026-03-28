@@ -7,6 +7,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from aios_demo import main as aios_main
+from tools.communication_recorder import record_message
 
 
 def _load_listen_address() -> tuple[str, int]:
@@ -48,25 +49,52 @@ async def handle_incoming(
 
     msg_type: str = message.get("type", "")
 
-    if msg_type == "request":
+    if msg_type in ("message", "request"):
+        # Standard incoming message (new "message" type or legacy "request" type)
         sender = message.get("sender", "Unknown")
         content = message.get("content", "")
-        response_host = message.get("response_host", "")
-        response_port = message.get("response_port", "")
-        print(f"[AIOS Listener] Request from {sender!r}: {content}")
+        # Resolve sender phone: new format uses "sender_phone", legacy uses response_host:response_port
+        sender_phone = message.get("sender_phone", "")
+        if not sender_phone:
+            rh = message.get("response_host", "")
+            rp = message.get("response_port", "")
+            if rh and rp:
+                sender_phone = f"{rh}:{rp}"
+        print(f"[AIOS Listener] Message from {sender!r}: {content}")
+
+        # Record incoming message to conversation history immediately
+        if sender_phone:
+            record_message(
+                contactor_name=sender,
+                phone_number=sender_phone,
+                sender=sender,
+                content=content,
+            )
+
         task = (
             f'Received an incoming D2D message from contact "{sender}": "{content}". '
-            f'The sender "{sender}" has phone number {response_host}:{response_port} '
-            f"and is waiting for a reply. "
+            f'The sender "{sender}" has phone number {sender_phone}. '
             f"Decide whether and how to respond based on the content and context."
         )
 
     elif msg_type == "response":
+        # Legacy one-way notification format
         data = message.get("data", "")
-        print(f"[AIOS Listener] One-way notification received: {data}")
+        sender = message.get("sender", "Unknown")
+        sender_phone = message.get("sender_phone", "")
+        print(f"[AIOS Listener] One-way notification from {sender!r}: {data}")
+
+        if sender_phone:
+            record_message(
+                contactor_name=sender,
+                phone_number=sender_phone,
+                sender=sender,
+                content=data,
+            )
+
         task = (
-            f'Received a one-way D2D notification from a contact: "{data}". '
-            f"No reply is expected. Log this message and take any appropriate action."
+            f'Received a one-way D2D notification from "{sender}": "{data}". '
+            f"No reply is expected. Take any appropriate action."
         )
 
     else:

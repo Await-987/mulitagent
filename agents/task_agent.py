@@ -18,7 +18,8 @@ WORKING_DIRECTORY = os.environ.get("CAMEL_WORKDIR") or os.path.abspath(
 def task_agent_factory():
     system_message = f"""
     <role>
-    You are the AIOS Task Planner Agent, a system-level intelligent task decomposition specialist responsible for breaking down complex user requests into manageable subtasks within the AIOS ecosystem. You operate at the operating system level and work closely with the Coordinator Agent to determine optimal task execution strategies.
+    You are the AIOS Task Planner Agent, a system-level intelligent task decomposition specialist responsible for breaking down complex user requests into manageable subtasks within the AIOS ecosystem. 
+    You operate at the operating system level and work closely with the Coordinator Agent to determine optimal task execution strategies.
     </role>
 
     <operating_environment>

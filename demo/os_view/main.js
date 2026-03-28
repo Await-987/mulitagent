@@ -704,29 +704,70 @@ class SearchApp extends BaseApp {
     const div = document.createElement('div');
     div.className = 'search-msg search-msg-agent search-msg-markdown';
 
-    // Render Markdown → sanitize → inject
+    // Step 1: Extract LaTeX blocks BEFORE Markdown parsing.
+    // marked(breaks:true) inserts <br> inside $$…$$ which splits text nodes
+    // and breaks renderMathInElement's delimiter search.
+    const mathBlocks = [];
+    const PH_L = '\uE100', PH_R = '\uE101'; // private-use Unicode, safe through marked & DOMPurify
+    let text = answer;
+    // Display math first (greedy-safe with [\s\S]*?)
+    text = text.replace(/\$\$([\s\S]*?)\$\$/g, (_, math) => {
+      const idx = mathBlocks.length;
+      mathBlocks.push({ display: true, math });
+      return `${PH_L}MATH${idx}${PH_R}`;
+    });
+    // Inline math (no newlines inside)
+    text = text.replace(/\$([^$\n]+?)\$/g, (_, math) => {
+      const idx = mathBlocks.length;
+      mathBlocks.push({ display: false, math });
+      return `${PH_L}MATH${idx}${PH_R}`;
+    });
+
+    // Step 2: Render Markdown → sanitize → inject
     let html;
     if (window.marked) {
-      html = window.marked.parse(answer, { breaks: true, gfm: true });
+      html = window.marked.parse(text, { breaks: true, gfm: true });
       if (window.DOMPurify) html = window.DOMPurify.sanitize(html);
     } else {
-      html = answer
+      html = text
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
         .replace(/\n/g, '<br>')
         .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
     }
     div.innerHTML = html;
 
-    // Render math formulas (KaTeX)
-    if (window.renderMathInElement) {
-      window.renderMathInElement(div, {
-        delimiters: [
-          { left: '$$',  right: '$$',  display: true  },
-          { left: '$',   right: '$',   display: false },
-          { left: '\\[', right: '\\]', display: true  },
-          { left: '\\(', right: '\\)', display: false },
-        ],
-        throwOnError: false,
+    // Step 3: Walk DOM text nodes and replace placeholders with KaTeX output
+    if (mathBlocks.length > 0) {
+      const walker = document.createTreeWalker(div, NodeFilter.SHOW_TEXT);
+      const pending = [];
+      let n;
+      while ((n = walker.nextNode())) {
+        if (n.textContent.includes(PH_L)) pending.push(n);
+      }
+      pending.forEach(node => {
+        const parts = node.textContent.split(new RegExp(`(${PH_L}MATH\\d+${PH_R})`));
+        if (parts.length <= 1) return;
+        const frag = document.createDocumentFragment();
+        parts.forEach(part => {
+          const m = part.match(new RegExp(`${PH_L}MATH(\\d+)${PH_R}`));
+          if (m) {
+            const { math, display } = mathBlocks[+m[1]];
+            const span = document.createElement('span');
+            if (window.katex) {
+              try {
+                span.innerHTML = window.katex.renderToString(math, { displayMode: display, throwOnError: false });
+              } catch (_) {
+                span.textContent = display ? `$$${math}$$` : `$${math}$`;
+              }
+            } else {
+              span.textContent = display ? `$$${math}$$` : `$${math}$`;
+            }
+            frag.appendChild(span);
+          } else if (part) {
+            frag.appendChild(document.createTextNode(part));
+          }
+        });
+        node.parentNode.replaceChild(frag, node);
       });
     }
 
@@ -795,13 +836,17 @@ class ContactsApp extends BaseApp {
     if (!this._data) { body.innerHTML = '<div class="state-error">无法加载联系人数据</div>'; return; }
 
     if (tab === 'recents') {
-      const history = [...(this._data.history || [])].sort((a,b) => b.title.localeCompare(a.title));
+      const history = [...(this._data.history || [])].sort((a, b) => {
+        const aLast = a.messages?.[a.messages.length - 1]?.timestamp || '';
+        const bLast = b.messages?.[b.messages.length - 1]?.timestamp || '';
+        return bLast.localeCompare(aLast);
+      });
       if (!history.length) { body.innerHTML = '<div class="state-loading" style="color:#aaa;">暂无通话记录</div>'; return; }
       body.innerHTML = `<div class="contacts-list">
         ${history.map(h => this._recentItem(h)).join('')}
       </div>`;
       $$('.contact-item', body).forEach((item, i) => {
-        item.addEventListener('click', () => this._openContactDetail(history[i].content.contactor));
+        item.addEventListener('click', () => this._openConversation(history[i]));
       });
     } else {
       const profiles = this._data.profiles || {};
@@ -819,18 +864,20 @@ class ContactsApp extends BaseApp {
   }
 
   _recentItem(h) {
-    const { contactor, data } = h.content;
-    const msgs = parseConversation(data, contactor);
+    const contactor = h.contactor;
+    const msgs = h.messages || [];
     const last = msgs[msgs.length - 1];
-    const preview = last ? `${last.isUser ? '我' : contactor}: ${last.text}` : '';
+    const previewSender = last ? (last.sender === '我' ? '我' : contactor) : '';
+    const preview = last ? `${previewSender}: ${last.content}` : '';
+    const lastTime = last ? last.timestamp : '';
     const color = avatarColor(contactor);
     return `<div class="contact-item">
       <div class="contact-avatar" style="background:${color}">${avatarLetter(contactor)}</div>
       <div class="contact-info">
-        <div class="contact-name">${contactor}</div>
-        <div class="contact-preview">${preview}</div>
+        <div class="contact-name">${escapeHTML(contactor)}</div>
+        <div class="contact-preview">${escapeHTML(preview)}</div>
       </div>
-      <div class="contact-time">${fmtDate(h.title)}</div>
+      <div class="contact-time">${fmtDate(lastTime)}</div>
     </div>`;
   }
 
@@ -846,10 +893,7 @@ class ContactsApp extends BaseApp {
   }
 
   _latestHistory(name) {
-    const history = [...(this._data?.history || [])]
-      .filter(item => item?.content?.contactor === name)
-      .sort((a, b) => b.title.localeCompare(a.title));
-    return history[0] || null;
+    return (this._data?.history || []).find(h => h.contactor === name) || null;
   }
 
   _openContactDetail(name) {
@@ -857,9 +901,9 @@ class ContactsApp extends BaseApp {
     const profile = profiles[name] || {};
     const latest = this._latestHistory(name);
     const color = avatarColor(name);
-    const latestPreview = latest
-      ? parseConversation(latest.content.data, name).slice(-1)[0]
-      : null;
+    const latestMsgs = latest?.messages || [];
+    const latestPreview = latestMsgs.length ? latestMsgs[latestMsgs.length - 1] : null;
+    const latestTime = latestPreview?.timestamp || '';
     const body = $('#contacts-body', this.window);
     this._viewing = { type: 'detail', name };
 
@@ -901,17 +945,29 @@ class ContactsApp extends BaseApp {
           <div class="contact-detail-block-title">最近联系</div>
           <div class="contact-detail-card">
             <div class="contact-detail-label">最近时间</div>
-            <div class="contact-detail-value">${latest ? formatFullDate(latest.title) : '暂无记录'}</div>
+            <div class="contact-detail-value">${latestTime ? formatFullDate(latestTime) : '暂无记录'}</div>
           </div>
           <div class="contact-detail-card">
             <div class="contact-detail-label">最近一条</div>
-            <div class="contact-detail-value">${latestPreview ? `${latestPreview.isUser ? '我' : name}：${latestPreview.text}` : '暂无消息'}</div>
+            <div class="contact-detail-value">${latestPreview ? `${latestPreview.sender === '我' ? '我' : name}：${escapeHTML(latestPreview.content)}` : '暂无消息'}</div>
           </div>
         </div>
 
+        ${profile['说话态度与语气'] ? `
+        <div class="contact-detail-section">
+          <details class="contact-tone-details">
+            <summary class="contact-tone-summary">
+              <span>隐藏信息</span>
+              <span class="contact-tone-hint">沟通语气</span>
+            </summary>
+            <div class="contact-tone-body">${escapeHTML(profile['说话态度与语气'])}</div>
+          </details>
+        </div>
+        ` : ''}
+
         ${latest ? `
           <div class="contact-detail-actions">
-            <button class="contact-detail-action" id="contact-open-chat">查看最近聊天记录</button>
+            <button class="contact-detail-action" id="contact-open-chat">查看聊天记录</button>
           </div>
         ` : ''}
       </div>`;
@@ -920,13 +976,15 @@ class ContactsApp extends BaseApp {
       this._viewing = null;
       this._renderTab(this._activeTab);
     });
-    $('#contact-open-chat', this.window)?.addEventListener('click', () => this._openConversation(latest));
+    $('#contact-open-chat', this.window)?.addEventListener('click', () => this._openConversation(latest, 'detail'));
   }
 
-  _openConversation(h) {
+  _openConversation(h, source = 'recents') {
     this._viewing = h;
-    const { contactor, data } = h.content;
-    const msgs = parseConversation(data, contactor);
+    const contactor = h.contactor;
+    const msgs = h.messages || [];
+    const lastTime = msgs.length ? msgs[msgs.length - 1].timestamp : '';
+    const backLabel = source === 'detail' ? contactor : '通讯录';
     const body = $('#contacts-body', this.window);
     body.innerHTML = `
       <div class="app-header" style="background:#f2f2f7;border-bottom:1px solid rgba(0,0,0,.08);">
@@ -934,26 +992,32 @@ class ContactsApp extends BaseApp {
           <svg width="10" height="17" viewBox="0 0 10 17" fill="none">
             <path d="M9 1L1 8.5L9 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
-          &nbsp;通讯录
+          &nbsp;${escapeHTML(backLabel)}
         </button>
         <div class="app-title" style="text-align:center;font-size:15px;">
-          <div style="font-weight:600;">${contactor}</div>
-          <div style="font-size:11px;color:#888;font-weight:400;">${fmtDate(h.title)}</div>
+          <div style="font-weight:600;">${escapeHTML(contactor)}</div>
+          <div style="font-size:11px;color:#888;font-weight:400;">${fmtDate(lastTime)}</div>
         </div>
         <div style="width:60px;"></div>
       </div>
       <div class="conversation-view app-content">
         <div class="conversation-msgs">
           ${msgs.map(m => `
-            <div class="msg-bubble-wrap ${m.isUser?'user':'contact'}">
-              <div class="msg-bubble">${m.text}</div>
+            <div class="msg-bubble-wrap ${m.sender === '我' ? 'user' : 'contact'}">
+              <div class="msg-bubble">${escapeHTML(m.content)}</div>
+              <div class="msg-time">${fmtDate(m.timestamp)}</div>
             </div>`).join('')}
         </div>
       </div>`;
     $('#conv-back', this.window)?.addEventListener('click', () => {
-      this._openContactDetail(contactor);
+      if (source === 'detail') {
+        this._openContactDetail(contactor);
+      } else {
+        this._viewing = null;
+        this._renderTab(this._activeTab);
+      }
     });
-    // scroll body to bottom to show latest messages
+    // scroll to bottom to show latest messages
     setTimeout(() => { body.scrollTop = body.scrollHeight; }, 80);
   }
 }
