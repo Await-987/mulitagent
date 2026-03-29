@@ -390,10 +390,33 @@ def api_search_reset():
     return jsonify({'ok': True})
 
 # ── Assistant / 小艺 (AIOS integration) ──────────────────────────────────────
+_session_loops      = {}   # session_id → asyncio event loop (for cancellation)
+_session_loops_lock = threading.Lock()
+
+
+def _cancel_aios_task(session_id: str) -> None:
+    """Cancel the asyncio event loop driving an AIOS task."""
+    with _session_loops_lock:
+        loop = _session_loops.get(session_id)
+    if not loop or not loop.is_running():
+        return
+    try:
+        def _do_cancel():
+            for t in asyncio.all_tasks(loop):
+                t.cancel()
+        loop.call_soon_threadsafe(_do_cancel)
+    except RuntimeError:
+        pass  # loop already closed
+
+
 def _run_aios_task(session_id: str, task_text: str) -> None:
     """Thread target: run the full AIOS pipeline for one 小艺 session."""
     # ContextVars don't propagate to new threads — set explicitly here.
     _ui_bridge.set_session(session_id)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    with _session_loops_lock:
+        _session_loops[session_id] = loop
     try:
         from demo.aios_demo import main as _aios_main
 
@@ -402,9 +425,23 @@ def _run_aios_task(session_id: str, task_text: str) -> None:
             _ui_bridge.set_session(session_id)
             await _aios_main(task_text)
 
-        asyncio.run(_wrapped())
+        loop.run_until_complete(_wrapped())
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        pass  # clean cancellation
     except Exception as exc:
-        _ui_bridge.push_ai_message(f'❌ 任务执行出错：{exc}')
+        # Only show error if session wasn't cancelled by user.
+        with _ui_bridge._lock:
+            s = _ui_bridge._sessions.get(session_id)
+            cancelled = s.get('cancelled') if s else True
+        if not cancelled:
+            _ui_bridge.push_ai_message(f'❌ 任务执行出错：{exc}')
+    finally:
+        with _session_loops_lock:
+            _session_loops.pop(session_id, None)
+        try:
+            loop.close()
+        except Exception:
+            pass
         _ui_bridge.mark_done()
 
 
@@ -473,6 +510,7 @@ def api_assistant_cancel():
     body       = request.get_json() or {}
     session_id = str(body.get('session_id', '')).strip()
     _ui_bridge.cancel_session(session_id)
+    _cancel_aios_task(session_id)
     return jsonify({'ok': True})
 
 
@@ -506,6 +544,85 @@ def api_push():
             'timestamp': datetime.now().isoformat(),
         })
     return jsonify({'ok': True})
+
+# ── D2D pending messages (user confirms before 小艺 handles) ──────────────
+_pending_d2d      = {}   # pending_id → {task, display_sender, display_content}
+_pending_d2d_lock = threading.Lock()
+
+
+@app.route('/api/d2d/pending', methods=['POST'])
+def api_d2d_pending():
+    """Listener posts incoming D2D messages here. They are queued until the
+    user confirms or dismisses them via the phone UI."""
+    body = request.get_json() or {}
+    task            = str(body.get('task', '')).strip()
+    display_sender  = str(body.get('display_sender', '')).strip()
+    display_content = str(body.get('display_content', '')).strip()
+    if not task:
+        return jsonify({'status': 'error', 'message': 'task is required'})
+
+    pending_id = uuid.uuid4().hex[:12]
+    with _pending_d2d_lock:
+        _pending_d2d[pending_id] = {
+            'task': task,
+            'display_sender': display_sender,
+            'display_content': display_content,
+        }
+
+    # Also push a notification banner so the user sees the incoming message.
+    with _notif_lock:
+        _notifs.append({
+            'id':        pending_id,
+            'app':       'contacts',
+            'title':     f'来自 {display_sender} 的消息' if display_sender else '收到新消息',
+            'message':   display_content,
+            'timestamp': datetime.now().isoformat(),
+            'pending_d2d_id': pending_id,
+        })
+    return jsonify({'status': 'pending', 'pending_id': pending_id})
+
+
+@app.route('/api/d2d/pending', methods=['GET'])
+def api_d2d_pending_list():
+    """Frontend polls this to discover pending D2D messages awaiting confirmation."""
+    with _pending_d2d_lock:
+        items = [
+            {'id': pid, **info}
+            for pid, info in _pending_d2d.items()
+        ]
+    return jsonify({'pending': items})
+
+
+@app.route('/api/d2d/accept', methods=['POST'])
+def api_d2d_accept():
+    """User confirmed — start the AIOS task for this D2D message."""
+    body = request.get_json() or {}
+    pending_id = str(body.get('pending_id', '')).strip()
+    with _pending_d2d_lock:
+        info = _pending_d2d.pop(pending_id, None)
+    if not info:
+        return jsonify({'status': 'error', 'message': 'not found or already handled'})
+
+    # Create session and start AIOS task (same logic as POST /api/assistant).
+    new_sid = _ui_bridge.create_session()
+    if info['display_content']:
+        _ui_bridge.push_incoming_display(new_sid, info['display_sender'], info['display_content'])
+    t = threading.Thread(
+        target=_run_aios_task, args=(new_sid, info['task']), daemon=True
+    )
+    t.start()
+    return jsonify({'status': 'started', 'session_id': new_sid})
+
+
+@app.route('/api/d2d/dismiss', methods=['POST'])
+def api_d2d_dismiss():
+    """User dismissed — discard the pending D2D message."""
+    body = request.get_json() or {}
+    pending_id = str(body.get('pending_id', '')).strip()
+    with _pending_d2d_lock:
+        _pending_d2d.pop(pending_id, None)
+    return jsonify({'ok': True})
+
 
 # ── AIOS Listener (auto-start alongside the web server) ──────────────────
 def _start_listener() -> None:

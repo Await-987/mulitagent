@@ -13,43 +13,25 @@ _ORCA_PORT  = int(os.environ.get("ORCA_PORT", 5001))
 _SERVER_URL = os.environ.get("ORCA_SERVER_URL", f"http://127.0.0.1:{_ORCA_PORT}")
 
 
-def _try_notify_server(app: str, title: str, message: str) -> None:
-    """Best-effort HTTP push to the OS View server notification queue."""
-    try:
-        import urllib.request, urllib.error
-        payload = json.dumps({"app": app, "title": title, "message": message}).encode()
-        req = urllib.request.Request(
-            f"{_SERVER_URL}/api/notifications/push",
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        urllib.request.urlopen(req, timeout=2)
-    except Exception:
-        pass  # server not running — silently ignore
-
-
-def _try_start_server_task(
+def _try_queue_pending_d2d(
     task: str,
     display_sender: str = "",
     display_content: str = "",
 ) -> bool:
     """
-    POST the AIOS task to the OS View server's /api/assistant endpoint.
-    display_sender / display_content are shown immediately in the 小艺 panel
-    so the user can see who sent what before the agent responds.
+    POST the incoming D2D message to the OS View server as a pending task.
+    The user will see a confirm dialog and decide whether to let 小艺 handle it.
     Returns True if the server accepted it (so local execution can be skipped).
     """
     try:
         import urllib.request, urllib.error
         payload = json.dumps({
-            "message": task,
-            "source": "listener",
+            "task": task,
             "display_sender": display_sender,
             "display_content": display_content,
         }).encode()
         req = urllib.request.Request(
-            f"{_SERVER_URL}/api/assistant",
+            f"{_SERVER_URL}/api/d2d/pending",
             data=payload,
             headers={"Content-Type": "application/json"},
             method="POST",
@@ -127,8 +109,6 @@ async def handle_incoming(
             f"Decide whether and how to respond based on the content and context."
         )
         display_sender, display_content = sender, content
-        # Push UI notification
-        _try_notify_server("contacts", f"来自 {sender} 的消息", content)
 
     elif msg_type == "response":
         # Legacy one-way notification format
@@ -150,16 +130,16 @@ async def handle_incoming(
             f"No reply is expected. Take any appropriate action."
         )
         display_sender, display_content = sender, data
-        _try_notify_server("contacts", f"来自 {sender} 的通知", data)
 
     else:
         print(f"[AIOS Listener] Unknown message type {msg_type!r} — ignoring.")
         return
 
     print("[AIOS Listener] Routing to AIOS system...")
-    # Try to hand the task to the OS View server (shows it in 小艺 panel).
-    # Fall back to local execution if the server is not reachable.
-    if not _try_start_server_task(task, display_sender, display_content):
+    # Try to queue the D2D message on the OS View server for user confirmation.
+    # The user will see a confirm dialog and decide whether to let 小艺 handle it.
+    # Fall back to direct local execution if the server is not reachable.
+    if not _try_queue_pending_d2d(task, display_sender, display_content):
         await aios_main(task)
 
 

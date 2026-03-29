@@ -9,6 +9,11 @@ try:
 except ImportError:
     _bridge = None
 
+try:
+    from demo.os_view.lib.response_summarizer import summarize_response as _summarize
+except ImportError:
+    _summarize = None
+
 from agents import (
     coordinator_agent_factory,
     task_agent_factory,
@@ -131,7 +136,15 @@ async def main(task: str = ""):
     print(f"Status: {completed_task.state}")
     print(f"Result: {completed_task.result or '(no result)'}")
     if _bridge and completed_task.result:
-        _bridge.push_ai_message(completed_task.result)
+        if _summarize:
+            try:
+                summary = _summarize(original_task, enriched_task_content, completed_task.result)
+            except Exception as exc:
+                print(f"Warning: summarize failed ({exc}), falling back to raw result")
+                summary = completed_task.result
+            _bridge.push_ai_message(summary)
+        else:
+            _bridge.push_ai_message(completed_task.result)
 
     print("\n--- Workforce Log Tree ---")
     print(workforce.get_workforce_log_tree())

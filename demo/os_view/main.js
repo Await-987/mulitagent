@@ -2351,6 +2351,7 @@ class XiaoYiAssistant {
     this.closeBtn   = $('#xiaoyi-close');
     this.mask       = $('#xiaoyi-mask');
     this.dotsEl     = $('#xiaoyi-session-dots');
+    this.viewport   = $('#xiaoyi-sessions-viewport');
     this.track      = $('#xiaoyi-sessions-track');
     this._open      = false;
     this._sheetMin  = 0.54;
@@ -2525,7 +2526,7 @@ class XiaoYiAssistant {
 
   /** Adopt a session that was created externally (e.g. by the AIOS listener).
    *  Creates a new pane, opens the panel, and immediately polls for messages. */
-  _adoptExternalSession(sessionId) {
+  async _adoptExternalSession(sessionId) {
     if (!sessionId || this._closedSessions.has(sessionId)) return null;
 
     const existingIdx = this._findSessionIndexById(sessionId);
@@ -2536,7 +2537,7 @@ class XiaoYiAssistant {
       this._syncDots();
       this._syncInputRow();
       if (!this._open) this.open();
-      this._pollSession(existing);
+      await this._pollSession(existing);
       return existing;
     }
 
@@ -2563,7 +2564,7 @@ class XiaoYiAssistant {
     if (!this._open) this.open();
     // Immediately fetch any messages already queued on the server
     // (the incoming message label + content are in session.messages from server-side push).
-    this._pollSession(session);
+    await this._pollSession(session);
     return session;
   }
 
@@ -2657,7 +2658,7 @@ class XiaoYiAssistant {
         // Skipping done sessions prevents stale/old sessions from being
         // re-adopted as empty pages after a page reload.
         if (status === 'running' && !knownIds.has(id) && !this._closedSessions.has(id)) {
-          this._adoptExternalSession(id);
+          await this._adoptExternalSession(id);
         }
       }
     } catch { /* network glitch — skip */ }
@@ -2695,7 +2696,7 @@ class XiaoYiAssistant {
     } else if (msg.type === 'confirm') {
       // Only show the dialog if this session is still active (not closed/cancelled).
       if (this._sessions.includes(session)) {
-        this._showConfirmDialog(session.id, msg.prompt, msg.details);
+        this._showConfirmDialog(session.id, msg.prompt, msg.details, msg.extras);
       }
 
     } else if (msg.type === 'ask') {
@@ -2716,11 +2717,23 @@ class XiaoYiAssistant {
   // ─────────────────────────────────────────────────────────────
   // Confirm dialog
   // ─────────────────────────────────────────────────────────────
-  _showConfirmDialog(sessionId, prompt, details) {
+  _showConfirmDialog(sessionId, prompt, details, extras) {
     if (!this._confirmDialog) return;
     this._pendingConfirm = { sessionId };
     if (this._confirmPromptEl)  this._confirmPromptEl.textContent  = prompt || '';
     if (this._confirmDetailsEl) this._confirmDetailsEl.textContent = details || '';
+    // Render image previews if provided (e.g. XiaoHongShu post).
+    const imgContainer = $('#confirm-images');
+    if (imgContainer) {
+      imgContainer.innerHTML = '';
+      const images = extras?.images || [];
+      for (const url of images) {
+        const img = document.createElement('img');
+        img.src = url;
+        img.className = 'confirm-img-thumb';
+        imgContainer.appendChild(img);
+      }
+    }
     this._confirmDialog.classList.remove('hidden');
   }
 
@@ -2729,6 +2742,8 @@ class XiaoYiAssistant {
     const { sessionId } = this._pendingConfirm;
     this._pendingConfirm = null;
     this._confirmDialog?.classList.add('hidden');
+    const imgContainer = $('#confirm-images');
+    if (imgContainer) imgContainer.innerHTML = '';
     try {
       await fetch('/api/assistant/confirm', {
         method:  'POST',
@@ -2857,8 +2872,9 @@ class XiaoYiAssistant {
   // Session track swipe (left / right)
   // ─────────────────────────────────────────────────────────────
   _bindTrackSwipe() {
+    const viewport = this.viewport;
     const track = this.track;
-    if (!track) return;
+    if (!viewport || !track) return;
 
     let sx = 0, sy = 0, startIdx = 0, dragging = false, moved = false, dirLocked = null;
     const THRESHOLD = 40;
@@ -2890,7 +2906,7 @@ class XiaoYiAssistant {
 
       if (Math.abs(dx) > 6) moved = true;
       const base = startIdx * 100;
-      const w = track.offsetWidth || 393;
+      const w = viewport.offsetWidth || track.offsetWidth || 393;
 
       // Apply rubber-band resistance at boundaries so no blank space bleeds through.
       const atLeft  = startIdx === 0 && dx > 0;
@@ -2921,22 +2937,22 @@ class XiaoYiAssistant {
     };
 
     // Mouse (desktop) — direction detection not needed; mouse wheel handles vertical scroll.
-    track.addEventListener('mousedown', e => { onStart(e.clientX, e.clientY); e.preventDefault(); });
+    viewport.addEventListener('mousedown', e => { onStart(e.clientX, e.clientY); e.preventDefault(); });
     window.addEventListener('mousemove', e => { if (dragging) onMove(e.clientX, e.clientY); });
     window.addEventListener('mouseup',   e => { if (dragging) onEnd(e.clientX); });
 
     // Touch — must determine direction before preventing default scroll.
-    track.addEventListener('touchstart', e => {
+    viewport.addEventListener('touchstart', e => {
       const t = e.touches[0]; if (t) onStart(t.clientX, t.clientY);
     }, { passive: true });
-    track.addEventListener('touchmove', e => {
+    viewport.addEventListener('touchmove', e => {
       const t = e.touches[0];
       if (t) {
         const consumed = onMove(t.clientX, t.clientY);
         if (consumed) e.preventDefault();
       }
     }, { passive: false });
-    track.addEventListener('touchend', e => {
+    viewport.addEventListener('touchend', e => {
       const t = e.changedTouches[0]; if (t) onEnd(t.clientX);
     });
   }
@@ -4157,6 +4173,68 @@ class ORCAOS {
         for (const n of data?.notifications || []) this.notifMgr.show(n);
       } catch {}
     }, CFG.POLL_NOTIF);
+
+    // Poll pending D2D messages (user confirms before 小艺 handles)
+    this._pendingD2D = null;  // currently shown pending D2D
+    this._d2dDialog       = $('#d2d-confirm');
+    this._d2dSenderEl     = $('#d2d-confirm-sender');
+    this._d2dContentEl    = $('#d2d-confirm-content');
+    this._d2dYes          = $('#d2d-confirm-yes');
+    this._d2dNo           = $('#d2d-confirm-no');
+    this._d2dOverlay      = $('#d2d-confirm-overlay');
+
+    this._d2dYes?.addEventListener('click', () => this._respondD2D(true));
+    this._d2dNo?.addEventListener('click', () => this._respondD2D(false));
+    this._d2dOverlay?.addEventListener('click', () => this._respondD2D(false));
+
+    setInterval(async () => {
+      if (this._pendingD2D) return;  // already showing a dialog
+      try {
+        const r = await fetch('/api/d2d/pending');
+        if (!r.ok) return;
+        const { pending } = await r.json();
+        if (pending?.length > 0) {
+          this._showD2DConfirm(pending[0]);
+        }
+      } catch {}
+    }, CFG.POLL_NOTIF);
+  }
+
+  _showD2DConfirm(item) {
+    if (!this._d2dDialog) return;
+    this._pendingD2D = item;
+    if (this._d2dSenderEl)  this._d2dSenderEl.textContent  = item.display_sender ? `来自 ${item.display_sender} 的消息` : '收到新消息';
+    if (this._d2dContentEl) this._d2dContentEl.textContent = item.display_content || '';
+    this._d2dDialog.classList.remove('hidden');
+  }
+
+  async _respondD2D(accept) {
+    const item = this._pendingD2D;
+    if (!item) return;
+    this._pendingD2D = null;
+    this._d2dDialog?.classList.add('hidden');
+    try {
+      if (accept) {
+        const r = await fetch('/api/d2d/accept', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ pending_id: item.id }),
+        });
+        const data = await r.json();
+        // Immediately adopt the newly created session so the user sees
+        // the chat pane with messages right away (instead of waiting for
+        // the next _discoverSessions poll cycle).
+        if (data?.session_id && this.assistant) {
+          await this.assistant._adoptExternalSession(data.session_id);
+        }
+      } else {
+        await fetch('/api/d2d/dismiss', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ pending_id: item.id }),
+        });
+      }
+    } catch { /* best-effort */ }
   }
 
   onResize() {

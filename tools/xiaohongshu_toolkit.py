@@ -70,9 +70,16 @@ class XiaoHongShuToolkit(BaseToolkit):
         print(f"  Content: {text}")
         print(f"  Images : {image_paths}")
         if _ui_bridge and _ui_bridge.get_session_id():
+            # Build photo preview URLs for the confirm dialog.
+            image_urls = []
+            for p in image_paths:
+                fname = Path(p).name
+                if fname:
+                    image_urls.append(f'/api/photos/file/{fname}')
             confirmed = _ui_bridge.request_confirm(
                 f"发布小红书笔记《{title}》",
-                details=text[:120] + ("…" if len(text) > 120 else ""),
+                details=text,
+                extras={'images': image_urls} if image_urls else None,
             )
         else:
             answer = input("Publish this post? (yes / no): ").strip().lower()

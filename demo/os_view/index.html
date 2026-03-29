@@ -162,7 +162,9 @@
             </button>
           </div>
           <!-- Swipeable sessions viewport -->
-          <div id="xiaoyi-sessions-track"><!-- session panes injected by JS --></div>
+          <div id="xiaoyi-sessions-viewport">
+            <div id="xiaoyi-sessions-track"><!-- session panes injected by JS --></div>
+          </div>
           <div id="xiaoyi-input-row">
             <input id="xiaoyi-input" type="text" placeholder="向小艺提问…" autocomplete="off" />
             <button id="xiaoyi-send">
@@ -179,9 +181,24 @@
         <div id="confirm-card">
           <div id="confirm-prompt"></div>
           <div id="confirm-details"></div>
+          <div id="confirm-images"></div>
           <div id="confirm-actions">
             <button id="confirm-no">取消</button>
             <button id="confirm-yes">确认</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- D2D Incoming Message Confirm Dialog -->
+      <div id="d2d-confirm" class="hidden">
+        <div id="d2d-confirm-overlay"></div>
+        <div id="d2d-confirm-card">
+          <div id="d2d-confirm-sender"></div>
+          <div id="d2d-confirm-content"></div>
+          <div id="d2d-confirm-question">是否让小艺处理这条消息？</div>
+          <div id="d2d-confirm-actions">
+            <button id="d2d-confirm-no">忽略</button>
+            <button id="d2d-confirm-yes">让小艺处理</button>
           </div>
         </div>
       </div>

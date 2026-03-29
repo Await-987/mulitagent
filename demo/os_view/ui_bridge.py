@@ -97,10 +97,18 @@ def mark_done(result: Optional[str] = None) -> None:
 # Confirmation gate  (called from tools, blocks the calling thread)
 # ---------------------------------------------------------------------------
 
-def request_confirm(prompt: str, details: Optional[str] = None) -> bool:
+def request_confirm(prompt: str, details: Optional[str] = None,
+                    extras: Optional[dict] = None) -> bool:
     """
     Request yes/no confirmation via the phone UI.
     Blocks until the user responds (max 5 min) or falls back to console.
+
+    Args:
+        prompt: Title text shown in the confirm dialog.
+        details: Secondary detail text.
+        extras: Optional dict with extra data for the frontend (e.g.
+                ``{'images': ['/api/photos/file/a.jpg', ...]}``).
+
     Returns True for yes / False for no/timeout.
     """
     sid = _session_id_var.get()
@@ -120,12 +128,15 @@ def request_confirm(prompt: str, details: Optional[str] = None) -> bool:
         # If the session is already done or cancelled, skip the dialog silently.
         if s.get('cancelled') or s.get('status') == 'done':
             return False
-        s['messages'].append({
+        msg = {
             'type': 'confirm',
             'id': confirm_id,
             'prompt': prompt,
             'details': details,
-        })
+        }
+        if extras:
+            msg['extras'] = extras
+        s['messages'].append(msg)
         s['pending_confirm'] = {
             'id': confirm_id,
             'event': event,
