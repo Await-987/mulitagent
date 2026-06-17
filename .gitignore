@@ -1,29 +1,82 @@
-# Ignore environment file
+# Local secrets and machine-specific config
 .env
+.env.*
+!.env.example
+!example.env
+.python-version
 
-# Ignore all files under camel-master, but keep the folder itself
-#camel-master/**
-#!camel-master/
-
-# Ignore all files under mock_data/photos
-#mock_data/photos/**
-#!mock_data/photos/.gitkeep
-#!mock_data/photos/photos_data.json
-
-# Ignore PyCharm/IDEA project files
+# Local agent/editor state
+.agents/
+.codex/
+.claude/
+.vscode/
 .idea/
 
-# Ignore Python cache files
+# Python cache and build output
 __pycache__/
 **/__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
 
-# Optionally ignore compiled Python files
-*.pyc
-*.pyo
-*.pyd
+# Virtual environments
+.venv/
+venv/
+env/
+.venv-aios-hermes/
 
-# Ignore working_dir and eigent_logs.json
-eigent_logs.json
+# Node / browser toolkit output
+node_modules/
+camel-master/camel/toolkits/hybrid_browser_toolkit/ts/node_modules/
+camel-master/camel/toolkits/hybrid_browser_toolkit/ts/dist/
+camel-master/camel/toolkits/hybrid_browser_toolkit/ts/.playwright*
+
+# AIOS / Hermes runtime output
+runtime/
+workspace/
 working_dir/
+demo/working_dir/
+eigent_logs.json
 **/eigent_logs.json
-**/working_dir/
+workforce_logs.json
+task_status.md
+*.jsonl
+*.sqlite
+*.sqlite3
+*.db
+
+# Demo-generated app data
+mock_data/xiaohongshu/xhs_post_*.json
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+*.swp
+*.swo
+.DS_Store
+
+# LaTeX build output
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.lof
+*.lot
+*.out
+*.run.xml
+*.synctex.gz
+*.toc
+
+# Keep source reports, ignore compiled report artifacts by default
+*.pdf
+!camel-master/test/data_samples/*.pdf

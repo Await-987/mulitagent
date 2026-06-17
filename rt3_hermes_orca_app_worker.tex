@@ -1,0 +1,378 @@
+\section{多实例智能体协同机制：Hermes Soul 与 ORCA 执行层的分层协同}
+\label{sec:rt3}
+
+ORCA-Hermes 原型采用“Soul Agent 个性化层、Workforce 执行层与 App 工具层”的三层架构，并在 Soul 个性化层引入 Hermes 作为系统级认知中枢。本阶段没有把 Hermes 做成新的应用执行器，而是让它承担用户理解、长期记忆、任务补全、主动澄清和任务交接等认知职责；ORCA 原有 Workforce 与各类 Camel App Agent 继续承担任务拆解、应用调度和工具执行。系统整体呈现出“强认知入口 + 稳定执行层 + 边界化应用工具”的分层形态。
+
+这个取舍来自 Hermes 与 App Agent 的形态差异。Hermes 有独立人格、长期记忆、会话状态、结构化事件流和外部工具接入能力，运行成本明显高于普通应用智能体。如果每个应用执行器都复制一份 Hermes，系统就要同时维护多份人格状态、多份记忆空间、多份工具权限和多条模型调用链路，端侧资源、任务恢复、权限隔离和日志归因都会变重。把 Hermes 放在 Soul 层后，强理解和长记忆能力集中用于任务入口；进入执行层前，Hermes 只需要把结构清晰的增强任务描述（enriched task）交给 Workforce，再由更轻量、更边界化的 App Agent 完成具体应用动作。
+
+基于这个取舍，本阶段重新定义了多实例协同问题：Hermes 作为 ORCA 的 Soul 认知中枢，如何稳定驱动既有 Camel 执行层完成跨应用任务。Hermes 负责意图解析、任务补全与风险识别，Workforce 负责任务组织、路由和依赖管理，App Agent 只在各自应用边界内完成动作。这里的架构原则很明确：重型认知智能体位于系统入口，不分散到每个应用执行器内部。
+
+\subsection{基础架构与实验依据}
+
+面向终端复杂任务的多智能体操作系统需要同时处理用户理解、任务编排、应用协同和长期个性化沉淀。ORCA-Hermes 因此采用三层系统结构：Soul Agent 个性化层负责维护用户画像、历史经历和偏好信息，并在任务进入执行层之前完成任务富化；Workforce 执行层由任务规划、协调路由和动态 Worker 组成，负责将复杂任务拆解为可执行子任务，并根据 App Agent 的能力声明进行分配；App 工具层通过统一接口接入通讯录、备忘录、相册、浏览器、小红书、携程等原生或第三方应用能力。该结构并不是单一聊天智能体，而是一个具有任务入口、协同调度和应用执行边界的多层智能体操作系统原型。
+
+在该系统框架中，Soul Agent 的关键作用是把用户的自然语言意图转化为带有个性化背景的任务输入。该层会结合灵魂档案、经历记录和 App 行为观察，补充用户可能没有显式表达的偏好约束。例如在旅行内容生成任务中，用户只提出“帮我发一篇小红书”，系统仍需要知道用户是否偏好自然风景照片、是否需要攻略干货风格、是否允许直接发布以及发布前是否需要确认。Workforce 则不直接承担长期画像理解，而是基于 Soul 层给出的任务目标进行拆解、路由、并行执行和失败恢复。App Agent 只在自身应用边界内调用工具，例如相册 Agent 处理照片筛选，携程 Agent 处理旅行信息查询，小红书 Agent 处理内容草稿和发布链路。该分工为 Hermes 的接入提供了明确位置：强认知能力应增强 Soul 层，而不是替代所有 App Agent。
+
+原型验证覆盖了三种任务形态。云南旅行小红书内容生成任务要求系统综合相册、携程和小红书能力，并把用户对照片风格和内容语气的偏好融入最终帖子，用于检验跨应用内容生成、个性化任务富化和外部可见动作处理。多源信息驱动的研究报告生成任务需要融合备忘录、联系人、照片和外部检索结果，重点观察多源信息组织、长文本生成和工具调用链路。跨设备协同任务则关注发送端与接收端之间的消息解析、联系人确认、跨设备通信和个性化回复。放在一起看，这些任务说明 MAOS 的价值不只在于某个应用能力是否可调用，更在于系统能否把多个应用能力组织成一个可恢复、可解释、可个性化的任务闭环。
+
+系统评价采用 E-Q-R-C-P 五维评估体系，用于评价多智能体操作系统在复杂任务下的综合表现。效率维度关注端到端任务时间、子任务平均耗时和并行调度收益；质量维度关注任务完成率、工作链合理性和生成结果质量；鲁棒性维度关注异常恢复、重试、重规划和任务状态稳定性；资源消耗维度关注 Token、内存、工具调用次数和运行开销；个性化维度关注输出风格、用户偏好匹配和长期经验沉淀。该评估体系的意义在于，它不仅判断“任务是否完成”，还判断任务是否以正确的层级、合理的成本和可持续的方式完成。
+
+已有实验给出了比较稳定的工程判断。MAOS 三层架构在概念和工程层面具备可行性，Soul Agent、Workforce 和 App 工具层之间的职责分工可以支撑跨应用长程任务。CAMEL/Workforce 也具备作为执行协作基础设施的工程基础，其任务分解、能力感知路由、动态 Worker、共享上下文和故障恢复机制已经覆盖多 Agent 协同的主要链路。端侧落地方面，完整大模型基座和多个重型智能体实例不适合直接下沉到设备侧；更合理的路线是端侧保留软件逻辑、任务状态、数据与工具接入，云侧承担高复杂度模型推理和长文本生成。ORCA-Hermes 的工程基础由此确定：Hermes 不重做执行层，而是在既有三层结构中增强 Soul 认知层。
+
+\begin{table}[h]
+\centering
+\begin{tabular}{p{0.20\linewidth}p{0.36\linewidth}p{0.34\linewidth}}
+\hline
+\textbf{基础结论类别} & \textbf{系统内容} & \textbf{对 ORCA-Hermes 的含义} \\
+\hline
+三层架构 & Soul Agent 负责任务富化，Workforce 负责任务拆解与调度，App 工具层负责应用能力接入 & Hermes 的合理位置是 Soul 认知层，而不是每个应用执行器 \\
+典型场景 & 旅行小红书、多源研究报告、跨设备通信覆盖跨应用、长程任务和外部可见动作 & 可用于评价 Hermes 是否提升入口任务定义质量 \\
+评估体系 & E-Q-R-C-P 同时评价效率、质量、鲁棒性、资源消耗和个性化 & Hermes 接入后需观察认知增强收益是否抵消上下文和调用成本 \\
+执行协同 & Workforce 支撑任务规划、能力路由、动态 Worker、状态管理和失败恢复 & 执行层继续由 Workforce 承担，Hermes 输出增强任务描述作为上游输入 \\
+端云结论 & 端侧保留软件逻辑和工具接入，云侧承担复杂模型推理 & Hermes 作为重型 Soul 更适合集中部署和受控调用，不宜下沉到所有 App Agent \\
+\hline
+\end{tabular}
+\caption{基础架构与实验结论对 ORCA-Hermes 设计的支撑关系}
+\label{tab:rt3-foundation}
+\end{table}
+
+\subsection{Hermes 接入后的架构承接与演进定位}
+
+ORCA-Hermes 原型在既有三层架构之上进行增量演进：Soul Agent 个性化层由 Hermes Soul 承担，Workforce 执行层继续作为任务拆解与调度基础设施，App 工具层仍通过专用 App Agent 接入相册、备忘录、小红书、携程、通讯录等应用能力。该演进保持了原有三层结构的稳定性，同时提升了系统入口处的用户理解和任务定义能力。
+
+这种承接关系形成了清晰的演进边界。Hermes 的引入不改变 MAOS 的三层架构，而是提升 Soul 层的认知能力；不改变 Workforce 的任务通道和调度职责，而是改善其上游任务输入质量；不改变 App Agent 的工具边界，而是通过更清晰的 enriched task 减少应用执行器对模糊任务的猜测。换言之，Hermes 是对系统入口认知能力的增强，而不是对执行层协同机制的推翻。
+
+\begin{table}[h]
+\centering
+\begin{tabular}{p{0.22\linewidth}p{0.34\linewidth}p{0.34\linewidth}}
+\hline
+\textbf{架构层次} & \textbf{本阶段承接方式} & \textbf{Hermes 引入后的变化} \\
+\hline
+Soul Agent 个性化层 & 保留其用户理解、任务富化和经验积累职责 & 由 Hermes Soul 承担更强的长期记忆、主动澄清和任务补全能力 \\
+Workforce 执行层 & 继续承担任务拆解、路由、依赖维护和失败恢复 & 接收更清晰的增强任务描述，减少直接处理模糊用户请求的压力 \\
+App 工具层 & 继续通过专用 App Agent 访问应用数据和工具能力 & 工具权限保持边界化，不因 Hermes 接入而扩散到所有应用 \\
+交互与确认链路 & 继续承担用户提问、确认、进度展示和结果反馈 & Soul 层澄清前移至任务下发之前，避免执行层反复追问 \\
+\hline
+\end{tabular}
+\caption{ORCA-Hermes 对三层架构的承接与增量}
+\label{tab:rt3-architecture-evolution}
+\end{table}
+
+这套结构带来几条直接约束。用户请求进入执行层前，必须先由认知层完成任务定义；涉及创作、发布、发消息、画像修改等高影响任务时，原始模糊请求不能直接交给 App Agent。执行层仍然保留工具边界和任务状态管理能力，即使 Soul 层具备更强理解能力，Hermes 也不能越过 Workforce 直接调用所有应用工具。协同效果的评价也不能只看最终结果，还要看任务定义位置、澄清轮次、子任务路由、工具边界、外部动作确认和结果沉淀。
+
+\begin{figure}[h]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+  font=\small,
+  box/.style={draw=black!65, rounded corners=3pt, align=center, minimum height=0.95cm, inner sep=5pt},
+  old/.style={box, fill=gray!10, minimum width=3.8cm},
+  new/.style={box, fill=blue!8, minimum width=4.4cm},
+  note/.style={align=center, font=\footnotesize, text width=3.6cm},
+  arr/.style={->, thick}
+]
+\node[old] (baseSoul) at (0, 2.4) {基础架构：Soul Agent\\个性化层};
+\node[old] (baseWf) at (0, 0.8) {基础架构：Workforce\\执行层};
+\node[old] (baseApp) at (0, -0.8) {基础架构：App\\工具层};
+
+\node[new] (hsoul) at (6.2, 2.4) {T+10：Hermes Soul\\认知中枢};
+\node[new] (hwf) at (6.2, 0.8) {T+10：ORCA Workforce\\任务调度与执行协同};
+\node[new] (happ) at (6.2, -0.8) {T+10：Camel App Agent\\专用应用执行单元};
+
+\node[note] (n1) at (12, 2.4) {替换/增强\\长期记忆、主动澄清、任务富化};
+\node[note] (n2) at (12, 0.8) {保持\\任务拆解、路由、依赖管理、恢复};
+\node[note] (n3) at (12, -0.8) {保持\\应用工具边界和数据访问边界};
+
+\draw[arr] (baseSoul) -- node[above, font=\footnotesize]{认知能力升级} (hsoul);
+\draw[arr] (baseWf) -- node[above, font=\footnotesize]{机制保留} (hwf);
+\draw[arr] (baseApp) -- node[above, font=\footnotesize]{边界保留} (happ);
+\draw[arr] (hsoul) -- (n1);
+\draw[arr] (hwf) -- (n2);
+\draw[arr] (happ) -- (n3);
+
+\draw[->, thick, blue!60] (hsoul.south) -- node[right, font=\footnotesize]{enriched task} (hwf.north);
+\draw[->, thick, blue!60] (hwf.south) -- node[right, font=\footnotesize]{子任务分配} (happ.north);
+\end{tikzpicture}}
+\caption{基础三层架构到 ORCA-Hermes 分层协同结构的演进关系}
+\label{fig:rt3-architecture-evolution}
+\end{figure}
+
+\subsection{协同问题的体系化再定义}
+
+在多智能体操作系统中，“多实例协同”常被理解为多个大模型智能体之间直接对话或彼此通信。ORCA-Hermes 原型采用另一种更符合当前系统条件的定义：由一个高能力 Soul 认知中枢把用户的模糊请求转化为可执行任务，再通过 Workforce 驱动多个专用 App Agent 完成跨应用协作。系统的任务链路可以概括为：用户请求进入 Hermes Soul，Hermes 结合用户画像、历史经历和应用行为观察补全任务上下文，形成 enriched task；随后 Workforce 根据任务内容进行拆解、路由和依赖管理；最后由相册、备忘录、小红书、携程、通讯录等 App Agent 在各自工具边界内执行并返回结果。
+
+这一问题的本质是“认知协同”与“执行协同”的分层。认知协同发生在任务入口，关注用户意图是否完整、是否需要追问、是否涉及外部可见动作、是否需要个性化表达，以及任务能否在当前上下文下稳定交给执行层。执行协同发生在 Workforce 内部，关注任务如何拆分、哪些 App Agent 具备对应能力、子任务之间是否存在依赖、失败后是否需要重试或重规划。Hermes Soul 解决的是前者，Camel Workforce 和 App Agent 解决的是后者。将两类协同混在一起，会导致系统职责不清：认知层可能越界执行应用动作，执行器也可能被迫承担用户澄清和任务定义职责。
+
+从用户体验角度看，这种分层尤为关键。用户面对的是一个系统级管家，而不是一个单独的小红书工具或相册工具。当用户说“帮我发一个小红书”时，系统需要先判断该请求属于创作型、外部可见、需要主题和素材约束的任务；若缺少关键信息，Soul 层应主动向用户澄清，而不是先把任务下发给小红书 Agent，再由应用执行器追问。Hermes Soul 的价值不在于生成更长的 prompt，而在于提前完成任务定义、风险识别和用户授权边界判断，使后续多 Agent 协同建立在明确任务之上。
+
+工程实现上，原型形成了“入口认知层 Hermes 化，执行层保持 Camel 化”的路线。Soul Agent 切换到 Hermes 运行时后，可以利用 Hermes 的长期记忆和工具桥完成任务富化；Workforce、Coordinator、Task Planner 以及各 App Agent 则继续沿用原有执行框架。该选择避免了短期内重写所有应用执行器，也避免了多个 Hermes 实例同时持有应用工具权限。由此得到的架构结论是：Hermes 适合作为 ORCA 的 Soul 认知中枢，而不是承担全部 Camel App Agent 的职责。
+
+\subsection{ORCA-Hermes 分层架构与能力单元}
+
+ORCA-Hermes 的运行闭环由五个相互衔接的能力单元构成：Soul 运行时选择、Hermes Soul 认知层、Soul 工具桥、Workforce 执行层和 OS View 交互层。Soul 运行时选择负责确定入口认知层使用 Camel 还是 Hermes；Hermes Soul 认知层负责理解用户和生成 enriched task；Soul 工具桥负责让 Hermes 访问用户画像、任务状态和人机澄清能力；Workforce 执行层负责拆解任务并调度 App Agent；OS View 交互层负责把澄清、确认、进度和结果呈现给用户。五类能力单元共同构成从用户意图到应用执行、再到结果反馈的完整闭环。
+
+Hermes Soul 认知层的关键特征是独立运行状态和长期上下文。每个 Hermes 实例拥有独立的角色说明、长期记忆、会话状态和事件流，因此它适合承担需要持续积累和人格化理解的 Soul 职责。启动时，系统将用户画像、长期经历和必要的系统说明转换为 Hermes 可理解的上下文，使其能够在任务进入执行层之前判断“这个用户是谁、偏好是什么、最近经历过什么、当前任务可能涉及哪些应用”。这种机制与普通 App Agent 不同：普通 App Agent 更关注单个应用内的查询或动作，Hermes Soul 更关注跨应用、跨时间和跨偏好的任务理解。
+
+Soul 工具桥使 Hermes 能够以受控方式访问 ORCA 的个性化能力。Hermes 本身不直接读取所有应用原始数据，也不直接调用所有 App 工具，而是通过 Soul 层暴露的工具读取用户画像、查询任务状态、追加经历、更新偏好，并在必要时向用户发起提问。这个设计的意义在于，Hermes 获得了系统认知层所需的最小必要能力，但不会绕过 Workforce 直接操作应用数据。对于发布、发消息、预订、删除、长期画像修改等高影响动作，Soul 工具桥还承担确认边界的作用，避免认知层在缺少授权时直接推动外部可见执行。
+
+Workforce 执行层承接了既有多 Agent 协作机制。Coordinator 负责根据任务需求和 Worker 能力进行匹配，Task Planner 负责将复杂任务拆解为可执行子任务，TaskChannel 负责维护任务状态、依赖关系和结果回收，各 App Agent 负责访问本应用工具并返回结果。Hermes Soul 输出 enriched task 后，执行层并不需要知道 Hermes 的内部记忆结构或推理过程，只需要接收一个清晰的任务说明、约束条件和授权状态。这种解耦保证了 Hermes 的引入不会破坏既有 Workforce 的任务调度模型。
+
+OS View 交互层则补足了系统级管家的用户反馈闭环。Hermes Soul 在识别到任务缺口时，应通过交互层向用户发起澄清，而不是把“请补充信息”作为普通任务继续下发。用户回复后，Soul 再将澄清结果吸收进 enriched task。对于执行进度、确认弹窗和最终结果，OS View 也承担统一呈现职责。由此，系统形成了“用户、Soul 认知层、Workforce、App Agent 与用户反馈”的闭环，而不是孤立的模型调用链。
+
+\begin{figure}[h]
+\centering
+\resizebox{0.98\textwidth}{!}{%
+\begin{tikzpicture}[
+  font=\small,
+  box/.style={draw=black!65, rounded corners=4pt, align=center, inner sep=5pt},
+  user/.style={box, fill=gray!12, minimum width=2.5cm, minimum height=0.85cm},
+  soul/.style={box, fill=purple!10, minimum width=4.4cm, minimum height=1.05cm},
+  bridge/.style={box, fill=orange!10, minimum width=5.9cm, minimum height=0.74cm, font=\footnotesize},
+  wf/.style={box, fill=blue!8, minimum width=2.8cm, minimum height=0.88cm},
+  appband/.style={box, fill=green!8, minimum width=11.2cm, minimum height=0.92cm, font=\footnotesize},
+  result/.style={box, fill=teal!8, minimum width=2.9cm, minimum height=0.88cm},
+  arr/.style={->, thick},
+  dasharr/.style={->, thick, dashed}
+]
+\node[user] (user) at (0, 3.6) {用户请求};
+\node[soul] (soul) at (4.0, 3.6) {Hermes Soul 认知层\\意图解析 / 任务补全 / 主动澄清};
+\node[result] (feedback) at (11.7, 3.6) {用户反馈\\结果展示};
+
+\node[bridge] (bridge) at (4.0, 4.78) {Soul 工具桥：用户提问与确认 / 画像与经历摘要 / 任务状态沉淀};
+
+\node[wf] (planner) at (2.0, 0.8) {Task Planner\\任务拆解};
+\node[wf] (coord) at (5.0, 0.8) {Coordinator\\能力匹配};
+\node[wf] (channel) at (8.0, 0.8) {TaskChannel\\依赖与状态};
+\node[result] (summary) at (11.2, 0.8) {结果汇总\\执行摘要};
+
+\node[appband] (apps) at (6.5, -0.9) {相册 Agent \quad 携程 Agent \quad 小红书 Agent \quad 通讯录 Agent \quad 备忘录 Agent};
+
+\draw[arr] (user) -- (soul);
+\draw[arr] (soul.south) -- node[left, font=\footnotesize, pos=0.55]{enriched task} (planner.north);
+\draw[arr] (planner) -- (coord);
+\draw[arr] (coord) -- (channel);
+\draw[arr] (channel) -- (summary);
+\draw[arr] (summary) -- node[right, font=\footnotesize]{统一反馈} (feedback);
+
+\draw[arr] (channel.south) -- node[right, font=\footnotesize]{子任务分发} (apps.north);
+\draw[arr] (apps.east) -| node[pos=0.28, below, font=\footnotesize]{工具结果} (summary.south);
+
+\draw[dasharr] (bridge.south) -- (soul.north);
+\draw[dasharr] (feedback.west) -- node[above, font=\footnotesize]{确认 / 追问} (soul.east);
+
+\node[align=center, font=\footnotesize] at (4.0, 5.35) {认知层};
+\node[align=center, font=\footnotesize] at (6.5, 1.55) {执行调度层};
+\node[align=center, font=\footnotesize] at (6.5, -1.55) {应用执行层};
+\end{tikzpicture}}
+\caption{ORCA-Hermes 分层协同架构}
+\label{fig:rt3-layered-architecture}
+\end{figure}
+
+\subsection{认知层与执行层的职责划分模型}
+
+基于上述架构，当前系统形成的是“集中式认知中枢 + 专用化执行单元”的分工模型。Hermes 负责处理跨应用、跨时间和跨偏好的高层语义问题，Camel App Agent 负责处理明确应用边界内的执行动作。这个模型与传统单 Agent 方案不同：单 Agent 往往需要同时持有所有工具、全部上下文和完整执行权限，而 ORCA-Hermes 将任务理解、任务编排和工具执行分开，使每一层只承担其最合适的职责。
+
+Hermes 与认知层的适配性主要体现在长期记忆、个性化语境、主动澄清和任务边界判断。用户的真实意图往往不是一句话中直接给出的，而是需要结合长期画像、近期经历、应用偏好和当前场景推断。例如旅行内容发布任务不仅涉及“写一篇小红书”，还可能涉及从相册选择照片、从携程获取旅行信息、保持用户常用语气、判断是否需要发布确认。这样的任务入口判断适合由 Hermes 处理，而不适合分散给每个 App Agent 各自猜测。
+
+Camel App Agent 与执行层的适配性则体现在清晰的应用工具边界。相册 Agent 负责照片检索和图像相关处理，备忘录 Agent 负责笔记读取和写入，小红书 Agent 负责内容草稿和发布动作，携程 Agent 负责旅行信息查询，通讯录 Agent 负责联系人和消息相关任务。每个 App Agent 只需要理解被分配到的子任务，不需要持有完整用户画像，也不需要决定整个系统应该如何回应用户。这种边界可以降低误调用风险，也便于定位失败原因和恢复任务状态。
+
+\begin{table}[h]
+\centering
+\begin{tabular}{p{0.20\linewidth}p{0.36\linewidth}p{0.34\linewidth}}
+\hline
+\textbf{层次} & \textbf{主要职责} & \textbf{不承担的职责} \\
+\hline
+Hermes Soul 认知层 & 用户理解、任务补全、风险识别、主动澄清、输出 enriched task & 不直接读取全部应用原始数据，不承担全部 App Agent 执行职责 \\
+ORCA Workforce & 子任务拆解、Worker 匹配、依赖维护、失败恢复、结果汇总 & 不直接处理原始模糊请求，不承担长期用户画像维护 \\
+Camel App Agent & 在各自应用边界内调用工具、完成子任务、返回结构化结果 & 不决定全局任务目标，不跨越自身应用权限边界 \\
+OS View 交互层 & 统一展示提问、确认、执行进度和最终反馈 & 不参与任务推理和工具选择 \\
+\hline
+\end{tabular}
+\caption{Hermes Soul 认知层与 ORCA 执行层职责边界}
+\label{tab:rt3-layer-responsibility}
+\end{table}
+
+该分工模型的核心价值在于降低系统复杂度。若把 Hermes 下沉到每个 App Agent，系统将得到多个强大但重型的局部认知单元，每个认知单元都可能维护不同上下文、不同工具调用历史和不同任务解释，反而不利于形成统一用户理解。当前方案保留一个强 Soul 认知中枢，由它统一解释用户请求，再让 Workforce 调度专用执行器。这样既利用了 Hermes 的强认知能力，又维持了执行层的可控性和可恢复性。
+
+\subsection{Hermes Soul 的任务接口与交互契约}
+
+Hermes Soul 在当前系统中的输入不应被理解为普通聊天 prompt，而应被理解为系统级任务入口。它接收的内容包括用户原始请求、用户画像摘要、长期经历摘要、与当前任务相关的应用偏好观察、可用 Soul 工具说明以及执行层交接约束。其输出也不应是面向用户的闲聊回复，而应是面向 Workforce 的 enriched task。该 enriched task 需要说明任务目标、用户偏好、必要上下文、涉及应用、执行限制、是否需要确认以及是否已经获得用户授权。
+
+从接口角度看，enriched task 是 Hermes Soul 与 ORCA Workforce 之间最关键的边界对象。它既不同于用户原始请求，也不同于 Workforce 内部的子任务列表。用户原始请求通常是模糊、口语化和上下文缺失的；Workforce 子任务则是执行层根据能力边界拆分出的具体动作。enriched task 位于两者之间，承担“把用户意图转译为可调度任务”的作用。其质量直接决定后续任务拆解是否稳定、App Agent 是否误解任务、以及外部可见动作是否得到必要确认。
+
+\begin{figure}[h]
+\centering
+\resizebox{0.92\textwidth}{!}{%
+\begin{tikzpicture}[
+  font=\small,
+  box/.style={draw=black!65, rounded corners=4pt, align=center, inner sep=6pt, minimum height=0.86cm},
+  state/.style={box, fill=blue!7, minimum width=3.7cm},
+  gate/.style={box, fill=orange!12, minimum width=3.7cm},
+  action/.style={box, fill=green!8, minimum width=3.7cm},
+  warn/.style={box, fill=red!8, minimum width=3.7cm},
+  arr/.style={->, thick}
+]
+\node[state] (raw) at (4.0, 4.2) {用户原始请求\\模糊 / 口语化 / 上下文不足};
+\node[state] (understand) at (4.0, 2.8) {Hermes Soul\\意图解析与画像匹配};
+\node[gate] (gate) at (4.0, 1.4) {任务可执行性门控\\信息是否充分 / 是否需授权};
+\node[action] (enriched) at (4.0, 0.0) {enriched task\\目标 / 约束 / 应用范围 / 状态};
+\node[action] (wf) at (4.0, -1.4) {Workforce\\拆解 / 路由 / 执行};
+
+\node[state] (context) at (-1.0, 2.8) {Soul 上下文\\画像摘要 / 经历 / App 偏好观察};
+\node[warn] (ask) at (-1.0, 1.4) {用户澄清\\主题 / 素材 / 授权 / 风险确认};
+\node[action] (sink) at (-1.0, -1.4) {结果沉淀\\任务记录 / 经历更新 / 状态恢复};
+
+\draw[arr] (raw) -- (understand);
+\draw[arr] (understand) -- (gate);
+\draw[arr] (gate) -- node[right, font=\footnotesize, fill=white, inner sep=1pt]{可执行} (enriched);
+\draw[arr] (enriched) -- (wf);
+
+\draw[arr] (context) -- (understand);
+\draw[arr] (gate) -- (ask);
+\draw[arr] (ask.north) -- (context.south);
+\draw[arr] (wf) -- (sink);
+\draw[arr] (sink.west) -- ++(-0.7,0) |- node[pos=0.24, left, font=\footnotesize]{状态回写} (context.west);
+\end{tikzpicture}}
+\caption{Hermes Soul 到 Workforce 的任务交接与澄清门控流程}
+\label{fig:rt3-enriched-task-gating}
+\end{figure}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{p{0.20\linewidth}p{0.38\linewidth}p{0.32\linewidth}}
+\hline
+\textbf{字段类别} & \textbf{建议内容} & \textbf{对执行层的作用} \\
+\hline
+任务目标 & 用户最终希望完成的结果、输出形态和交付对象 & 为 Task Planner 提供拆解依据，避免围绕原始话语反复猜测 \\
+个性化依据 & 与任务相关的用户偏好、历史经历、表达风格和长期限制 & 让 App Agent 在执行时保留个性化上下文，而无需读取完整画像 \\
+应用范围 & 任务可能涉及的应用能力，如相册、携程、小红书、通讯录或备忘录 & 为 Coordinator 提供 Worker 匹配边界，降低误路由概率 \\
+执行约束 & 禁止动作、隐私边界、素材筛选规则、格式要求和内容限制 & 防止执行层越权调用工具或生成不符合用户偏好的结果 \\
+确认状态 & 是否已澄清、是否已授权、哪些动作仍需二次确认 & 支持外部可见动作的安全执行和跨端恢复 \\
+结果沉淀 & 是否需要写回经历、更新画像、记录任务摘要或保留执行证据 & 支持 Soul 层长期个性化积累和后续复盘 \\
+\hline
+\end{tabular}
+\caption{enriched task 的字段级接口设计}
+\label{tab:rt3-enriched-task-fields}
+\end{table}
+
+在任务理解阶段，Hermes Soul 需要判断用户请求属于信息查询、内容生成、跨应用整理、外部发布、消息发送、系统设置或长期画像修改中的哪一类。不同任务类型对应不同的确认和执行策略。信息查询可以直接进入 Workforce；内容生成需要确认主题、语气和素材来源；外部发布和消息发送需要明确用户授权；长期画像修改需要判断该偏好是否稳定、是否由用户明确表达、是否应写入长期记忆。通过这种任务类型判断，Soul 认知层能够在入口处减少后续执行层的不确定性。
+
+在任务补全阶段，Hermes Soul 应将用户的自然语言请求转化为具备执行条件的 enriched task。任务补全并不是任意扩写，而是在已有用户画像和应用观察基础上补齐必要信息。例如，对于旅行小红书任务，Soul 可以补充用户偏好的表达风格、可能涉及的照片来源、旅行地点线索和发布前确认要求；对于联系人消息任务，Soul 可以补充联系人关系背景、语气偏好和发送确认要求；对于学术资料整理任务，Soul 可以补充用户长期研究兴趣、期望输出形式和需要查询的应用来源。补全结果必须服务于执行稳定性，而不是增加无关上下文。
+
+在主动澄清阶段，Hermes Soul 需要识别哪些信息缺失会影响任务质量或安全性。原则上，用户可以由 App Agent 查询到的数据不应反复问用户；但主题、意图、授权、外部可见动作和高影响偏好不能由系统擅自假设。澄清问题应尽量合并关键缺口，避免多轮碎片化打断。用户若明确表示“你自己决定”“按我的习惯来”“直接发”，Soul 可以在记录授权边界后采用合理默认值继续推进。这样，系统既能体现主动理解，又不把所有决策负担推回给用户。
+
+在任务交接阶段，Hermes Soul 需要输出可供 Workforce 使用的任务说明。该说明应包含四类信息：任务目标，即系统最终要完成什么；上下文依据，即该任务使用了哪些画像、经历或偏好观察；执行约束，即哪些动作不能做、哪些内容需要确认、哪些应用可被调用；结果要求，即输出应以什么形式反馈给用户或写回应用。这个交接契约是 Hermes 与 ORCA 协同的关键，因为 Workforce 只应接收满足执行条件的任务，而不应继续承担任务定义职责。
+
+\subsection{意图、任务、应用与结果的协同机制映射}
+
+Hermes 与 ORCA 的协同可以描述为“意图级指挥、任务级调度、应用级执行和结果级沉淀”的四阶段机制。意图级指挥由 Hermes Soul 完成，它负责把用户自然语言转化为明确任务。任务级调度由 Workforce 完成，它负责拆解任务、选择 App Agent、维护依赖和汇总结果。应用级执行由各 App Agent 完成，它们调用自身工具访问应用数据或执行动作。结果级沉淀由 Soul 与系统日志共同完成，用于记录任务执行结果、更新用户经历和支持后续恢复。
+
+该映射关系说明，Hermes 的事件流和 Workforce 的任务流并不是同一层概念。Hermes 的事件流主要反映 Soul 认知层的思考、工具调用、文本输出和完成状态，它适合用于观察入口理解过程；Workforce 的任务流主要反映子任务创建、分配、执行、完成和失败恢复，它适合用于观察执行层协作过程。当前阶段，两者之间的关键连接点是 enriched task。后续如果需要进一步提高可观测性，应将 Hermes Soul 事件与 Workforce 子任务事件统一到同一任务追踪视图中，而不是让两套日志各自存在。
+
+在通信机制上，Hermes 不需要直接与每个 App Agent 进行自由对话。更稳定的方式是让 Hermes 通过 enriched task 传达上层意图，由 Workforce 负责后续路由。这种机制类似操作系统中的系统调用边界：上层应用不直接操作硬件，而是通过统一接口提交请求；在本系统中，Hermes 不直接越过 Workforce 操作应用工具，而是通过任务交接把意图交给调度层。这样可以避免工具权限扩散，也便于执行层进行依赖管理、失败恢复和结果汇总。
+
+在状态机制上，Hermes Soul 与 Workforce 需要共享任务阶段，而不是共享全部内部上下文。Soul 需要知道任务是否仍待澄清、用户是否已经授权、执行层是否已完成，以及是否需要写入用户经历；Workforce 需要知道任务是否具备执行条件、哪些子任务已完成、哪些结果需要回收。双方共享的是任务状态和必要摘要，而不是完整模型上下文。该设计有助于控制 Token 成本，也为跨端恢复提供可迁移的状态边界。
+
+\subsection{原型验证设计与评价维度}
+
+原型验证聚焦 Hermes 作为 Soul 认知层参与完整任务闭环的能力，而非多个 Hermes 执行器之间的并发通信。验证场景需要同时具备跨应用、个性化和外部可见动作三类特征，以覆盖认知层理解、执行层拆解和应用层工具调用的主要链路。以旅行内容发布为例，用户提出“我去云南玩了，帮我看看相册、查一下旅行信息，写个帖子发到小红书”。该任务同时涉及相册检索、旅行信息整理、内容生成、发布确认和用户风格匹配，能够有效检验 Hermes Soul 是否能够在入口处完成任务定义，并将可执行任务交给 Workforce。
+
+在该场景中，Hermes Soul 首先识别任务涉及多个应用，并判断小红书发布属于外部可见动作。若用户没有说明主题、图片选择偏好或发布授权，Soul 在任务下发前发起澄清；若用户明确授权系统自行发挥，Soul 将授权状态和默认策略写入 enriched task。随后，Workforce 根据 enriched task 将任务拆分给相册 Agent、携程 Agent 和小红书 Agent。相册 Agent 负责查找相关照片，携程 Agent 负责补充旅行信息，小红书 Agent 负责生成草稿，并在确认条件满足后完成发布或模拟发布。最终结果由 Workforce 汇总，并通过系统交互层反馈给用户。
+
+验证评价不仅关注任务是否完成，更关注任务定义是否发生在正确层级。若 Hermes Soul 在入口处识别缺失信息并主动提问，说明认知层承担了任务定义职责；若模糊任务直接进入小红书 Agent，再由小红书 Agent 追问主题和素材，则说明澄清职责仍然滞留在执行层。后一种流程即使最终完成任务，也会造成链路变长、用户体验割裂和资源浪费。因此，本阶段验证的关键指标包括：Soul 是否生成 enriched task、是否在必要时主动澄清、Workforce 是否正确拆分子任务、App Agent 是否只在自身工具边界内执行、外部可见动作是否保留确认、结果是否能够回写为经历或任务记录。
+
+\begin{table}[h]
+\centering
+\begin{tabular}{p{0.20\linewidth}p{0.36\linewidth}p{0.34\linewidth}}
+\hline
+\textbf{验证维度} & \textbf{观察内容} & \textbf{判断意义} \\
+\hline
+入口理解 & Soul 是否识别任务缺口、应用范围和外部可见风险 & 判断 Hermes 是否真正承担系统认知层职责 \\
+任务富化 & enriched task 是否包含用户偏好、执行约束和授权状态 & 判断 Workforce 是否获得可执行输入 \\
+任务拆解 & Workforce 是否将任务分配给相册、旅行、小红书等对应 Agent & 判断执行层协同是否稳定 \\
+工具边界 & App Agent 是否只调用自身应用工具 & 判断权限隔离和责任边界是否清晰 \\
+结果闭环 & 是否形成最终反馈、任务记录和必要的经历沉淀 & 判断系统是否具备持续个性化基础 \\
+\hline
+\end{tabular}
+\caption{Hermes Soul 驱动 Camel App Agent 的验证维度}
+\label{tab:rt3-validation-dimensions}
+\end{table}
+
+E-Q-R-C-P 五维评估框架可直接映射到 Hermes Soul 与 ORCA 执行层的协同验证中。该映射不重新构造测试体系，而是将既有评估框架用于观察 Soul 认知层由 Hermes 承担后的效率、质量、鲁棒性、资源消耗和个性化表现。这样可以保证本阶段验证结果能够沿用统一指标体系进行解释和对比。
+
+\begin{figure}[h]
+\centering
+\resizebox{0.92\textwidth}{!}{%
+\begin{tikzpicture}[
+  font=\small,
+  center/.style={draw=black!70, rounded corners=5pt, fill=blue!8, align=center, minimum width=3.6cm, minimum height=1.2cm},
+  dim/.style={draw=black!60, rounded corners=4pt, fill=gray!8, align=center, text width=2.9cm, minimum height=0.95cm},
+  arr/.style={->, thick, draw=black!65}
+]
+\node[center] (core) at (0, 0) {ORCA-Hermes\\协同验证};
+\node[dim] (eff) at (-4.2, 2.1) {效率\\澄清耗时\\调度耗时};
+\node[dim] (qua) at (0, 2.8) {质量\\任务完整性\\输出匹配度};
+\node[dim] (rob) at (4.2, 2.1) {鲁棒性\\模糊任务处理\\失败恢复};
+\node[dim] (res) at (-3.2, -2.2) {资源消耗\\Token\\工具调用次数};
+\node[dim] (per) at (3.2, -2.2) {个性化\\画像使用\\经验沉淀};
+
+\draw[arr] (core) -- (eff);
+\draw[arr] (core) -- (qua);
+\draw[arr] (core) -- (rob);
+\draw[arr] (core) -- (res);
+\draw[arr] (core) -- (per);
+
+\node[align=center, font=\footnotesize, text width=8.2cm] at (0, -3.45)
+{验证目标：判断 Hermes 增强 Soul 认知层后，是否提升任务定义质量，同时保持执行层可控、成本可治理、结果可沉淀。};
+\end{tikzpicture}}
+\caption{E-Q-R-C-P 框架在 ORCA-Hermes 协同验证中的结构化映射}
+\label{fig:rt3-eqrcp-mapping}
+\end{figure}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{p{0.18\linewidth}p{0.38\linewidth}p{0.34\linewidth}}
+\hline
+\textbf{评估维度} & \textbf{协同验证中的观察对象} & \textbf{解释意义} \\
+\hline
+效率 & Soul 澄清耗时、enriched task 生成耗时、Workforce 拆解与调度耗时 & 判断 Hermes 增强认知层后是否显著拉长入口链路 \\
+质量 & enriched task 完整性、子任务拆解合理性、最终输出与用户目标匹配度 & 判断任务定义是否准确传递到执行层 \\
+鲁棒性 & 模糊请求处理、用户澄清缺失、外部可见动作确认和失败恢复路径 & 判断系统是否能在不完整任务下保持可控协作 \\
+资源消耗 & Soul 上下文规模、Token 消耗、工具调用次数和重复调用比例 & 判断 Hermes 长记忆能力是否带来可治理的成本开销 \\
+个性化 & 用户画像使用是否必要、表达风格是否匹配、任务后经验是否沉淀 & 判断 Hermes 是否真正提升 Soul 层的个性化能力 \\
+\hline
+\end{tabular}
+\caption{E-Q-R-C-P 框架在 ORCA-Hermes 协同验证中的映射}
+\label{tab:rt3-eqrcp-mapping}
+\end{table}
+
+当前原型已具备 Hermes Soul 作为入口认知层参与流程的基础条件：它能够接收用户请求，结合 Soul 侧上下文生成任务说明，并通过工具桥获得用户画像和澄清能力；Workforce 仍能继续承担后续拆解和调度职责。该状态说明“以 Hermes 替换 Soul 认知层、以 Camel 保持执行层”的路线在架构上可行。与此同时，验证体系也暴露出两个需要工程化固化的关键点：其一，澄清必须成为阻塞式任务状态，而不是普通文本交给执行层；其二，Hermes 事件流与 Workforce 任务流需要形成统一追踪，便于从用户请求一路定位到子任务结果。
+
+\subsection{适用边界、风险分析与后续研究方向}
+
+当前方案边界集中在“一个集中式认知中枢驱动多个轻量执行单元”。Hermes 作为 Soul 认知中枢接入系统入口，利用长期记忆和工具桥进行任务理解；执行层继续保持 Workforce 与 App Agent 架构，接收 enriched task 并完成跨应用调度；交互层承载用户澄清和执行反馈；统一运行环境减少 Hermes 与 ORCA 在本地原型中的环境割裂。该边界对应的是认知层增强，而不是由多个 Hermes 执行器重新组成一套执行层。
+
+当前方案不包含以下能力：多个 Hermes 实例作为普通执行单元并发参与 Workforce，不同 App 内部各自运行 Hermes 专属执行器，Hermes 事件直接驱动 Workforce 调度，以及多个 Hermes 实例之间通过直接通信形成自组织协作。Hermes 平台本身具备多实例供给能力，但这不等于已经具备多实例协同层。真正的协同层仍由 ORCA Workforce 承担，因为 Workforce 具备任务通道、依赖管理、Worker 匹配和失败恢复等机制。若未来需要引入多个 Hermes 专家角色，更适合将其作为少量重认知执行单元纳入 Workforce 调度，而不是把每个 App Agent 都替换为 Hermes。
+
+后续工作集中在三个工程面。Hermes Soul 侧需要继续稳定澄清策略、外部动作确认、画像更新和任务完成后的经验沉淀；Hermes 与 Workforce 之间需要把 enriched task 的结构化字段、授权状态、任务阶段、失败原因和执行摘要固定下来，让执行层更稳定地理解 Soul 输出；可观测性也需要继续补齐，把 Hermes 的入口事件、Workforce 的子任务事件和 App Agent 的工具结果统一到端到端任务记录中，用于评估任务完成率、澄清效率、Token 消耗、工具调用次数和用户确认负担。
+
+从风险角度看，当前方案的主要挑战不在于 Hermes 是否能生成更强的自然语言，而在于它是否能稳定遵守系统边界。若 Hermes 输出过多无关上下文，会增加 Token 成本并干扰执行层拆解；若 Hermes 直接替用户决定外部可见动作，会带来信任和安全风险；若 Workforce 接收到仍然模糊的任务，则执行层会继续承担澄清负担。为此，后续应把 Hermes Soul 的输出约束、用户确认策略和任务状态机作为核心工程对象，而不是只优化模型回复质量。
+
+\begin{table}[h]
+\centering
+\begin{tabular}{p{0.22\linewidth}p{0.34\linewidth}p{0.34\linewidth}}
+\hline
+\textbf{风险类型} & \textbf{可能表现} & \textbf{治理方向} \\
+\hline
+认知层越界 & Hermes 直接替用户决定发布、发送或修改长期画像等高影响动作 & 将外部可见动作纳入确认状态机，执行前保留用户授权边界 \\
+上下文膨胀 & 长期记忆、画像和应用观察被过量注入，导致成本和延迟上升 & 使用任务相关摘要、按需检索和执行结果压缩，控制 Soul 输入规模 \\
+执行层空转 & enriched task 仍然包含未澄清问题，Workforce 或 App Agent 被迫继续追问 & 将澄清前移为 Soul 阻塞式交互，待任务满足执行条件后再下发 \\
+边界模糊 & Hermes 与 App Agent 同时尝试操作应用工具，导致责任归因困难 & 保持“认知层生成任务、执行层调用工具”的单向职责边界 \\
+可观测性断裂 & Soul 事件和 Workforce 事件分离，难以复盘完整任务链路 & 建立统一任务追踪视图，关联入口理解、子任务执行和结果沉淀 \\
+\hline
+\end{tabular}
+\caption{ORCA-Hermes 分层协同的主要风险与治理方向}
+\label{tab:rt3-risk-governance}
+\end{table}
+
+当前原型体现的定位很清楚：Hermes 不承担全部 ORCA 执行层职责，而是作为 Soul 认知中枢驱动 Camel Workforce 和各 App Agent 工作。这个定位符合 Hermes 较重、长记忆、人格化和可观察的系统特征，也符合 ORCA 已经形成的三层架构。Soul 层需要强认知，Workforce 层需要可恢复的任务调度，App 层需要清晰工具边界。该方案可以用较低改造成本获得更强的用户理解能力，也为多实例协同、跨端恢复和端云资源优化留下了接口边界。

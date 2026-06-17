@@ -69,7 +69,10 @@ class XiaoHongShuToolkit(BaseToolkit):
         print(f"  Title  : {title}")
         print(f"  Content: {text}")
         print(f"  Images : {image_paths}")
-        if _ui_bridge and _ui_bridge.get_session_id():
+        if os.environ.get("AIOS_AUTO_CONFIRM_PUBLISH", "").strip() in {"1", "true", "True", "yes"}:
+            confirmed = True
+            print("Publish auto-confirmed by AIOS_AUTO_CONFIRM_PUBLISH.")
+        elif _ui_bridge and _ui_bridge.get_session_id():
             # Build photo preview URLs for the confirm dialog.
             image_urls = []
             for p in image_paths:

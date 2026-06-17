@@ -82,7 +82,8 @@ def glob_photos():
 def resolve_photo_url(raw_path):
     if not raw_path:
         return None
-    filename = Path(str(raw_path)).name
+    normalized = str(raw_path).replace('\\', '/')
+    filename = normalized.split('/')[-1]
     if not filename:
         return None
     photo = MOCK_DIR / 'photos' / filename
@@ -413,6 +414,10 @@ def _run_aios_task(session_id: str, task_text: str) -> None:
     """Thread target: run the full AIOS pipeline for one 小艺 session."""
     # ContextVars don't propagate to new threads — set explicitly here.
     _ui_bridge.set_session(session_id)
+    # Propagate session id + server port to any subprocess (e.g. the Hermes
+    # Soul tool bridge) so it can call back via the /api/_ipc/ask_user route.
+    os.environ['AIOS_CURRENT_SESSION_ID'] = session_id
+    os.environ['AIOS_OSVIEW_PORT'] = str(PORT)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     with _session_loops_lock:
@@ -443,6 +448,26 @@ def _run_aios_task(session_id: str, task_text: str) -> None:
         except Exception:
             pass
         _ui_bridge.mark_done()
+
+
+@app.route('/api/_ipc/ask_user', methods=['POST'])
+def api_ipc_ask_user():
+    """Internal IPC endpoint for the Hermes Soul tool bridge subprocess.
+
+    Body: {"session_id": "...", "question": "..."}
+    Returns: {"reply": "<user's free-text reply or ''>"}
+
+    The subprocess is on the same host (loopback only). Soul calls this via
+    the aios_soul_tool_bridge.py ask_human command so the question shows up
+    as a chat bubble in the 小艺 panel exactly like the Camel-side ask flow.
+    """
+    body = request.get_json(force=True, silent=True) or {}
+    sid = str(body.get('session_id', '')).strip()
+    question = str(body.get('question', '')).strip()
+    if not sid or not question:
+        return jsonify({'reply': '', 'error': 'session_id and question required'}), 400
+    reply = _ui_bridge.ask_user_for_session(sid, question)
+    return jsonify({'reply': reply or ''})
 
 
 @app.route('/api/assistant', methods=['GET', 'POST'])
@@ -657,6 +682,18 @@ if __name__ == '__main__':
         pass
 
     _start_listener()
+
+    _runtime_mode = os.environ.get('AIOS_AGENT_RUNTIME', 'camel').strip().lower() or 'camel'
+    _runtime_banner = '======== AIOS Soul Runtime ========'
+    _runtime_tag = '[HERMES]' if _runtime_mode == 'hermes' else '[CAMEL]'
+    print('\n' + _runtime_banner)
+    print(f'  {_runtime_tag} AIOS_AGENT_RUNTIME = {_runtime_mode}')
+    if _runtime_mode == 'hermes':
+        print(f'  HERMES_HOME       = {os.environ.get("AIOS_HERMES_HOME", "(unset)")}')
+        print(f'  HERMES_COMPANY    = {os.environ.get("AIOS_HERMES_COMPANY", "(unset)")}')
+        print(f'  HERMES_EMPLOYEE   = {os.environ.get("AIOS_HERMES_EMPLOYEE_ID", "(unset)")}')
+        print(f'  HERMES_FALLBACK   = {os.environ.get("AIOS_HERMES_FALLBACK", "(unset)")}')
+    print('=' * len(_runtime_banner))
 
     print('\nORCA OS View')
     print(f'  Local:   http://127.0.0.1:{PORT}')

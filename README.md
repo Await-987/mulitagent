@@ -1,288 +1,291 @@
-<div align="center">
+# ORCA-Hermes Soul Runtime
 
-<img src="images/logo.png" alt="ORCA Logo" width="200"/>
+ORCA-Hermes 是在 AIOS/ORCA 多智能体操作系统原型上接入 Hermes 后形成的实验项目。当前版本的设计边界很明确：**只把系统入口的 Soul Agent 换成 Hermes，Workforce、Coordinator、Task Agent 和各 App Agent 继续沿用 Camel/AIOS 执行框架**。
 
-# ORCA(On-device Reasoning Collaborative Agents)
+换句话说，Hermes 不作为每个 App 的执行器，也不替代整个 Camel Workforce。它更适合承担系统的“认知中枢”：理解用户、读取长期画像、主动澄清缺失信息、生成 enriched task，然后把可执行任务交给 Camel Workforce 调度其他 Agent 完成。
 
-**多智能体的 AI 操作系统**
+```text
+User / OS View
+  -> Hermes Soul Agent
+  -> enriched task
+  -> Camel Workforce
+  -> Camel App Agents
+  -> App tools / mock data
+  -> result / confirmation / memory update
+```
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python)](https://www.python.org/)
-[![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+## 当前能力
 
-[核心架构](#核心架构) · [功能特性](#功能特性) · [智能体生态](#智能体生态) · [快速开始](#快速开始) · [项目结构](#项目结构)
+- Hermes 作为 Soul Agent 运行，负责个性化理解、任务补全、澄清提问和任务交接。
+- Camel Workforce 继续负责任务拆解、Worker 匹配、依赖管理、结果汇总和失败恢复。
+- App Agent 已覆盖通讯录、备忘录、相册、小红书、携程、搜索、文档和开发工具等能力。
+- OS View 提供手机式交互界面，支持小艺面板、任务进度、确认弹窗、通知和 App 数据展示。
+- Hermes Soul 通过 MCP 工具访问用户画像、经历、任务状态和用户澄清能力。
+- AIOS、Camel、Hermes client 和 Hermes ACP 子进程共用一个 Python 3.11 环境，避免多个虚拟环境互相割裂。
 
-</div>
+## 架构说明
 
----
+### Hermes Soul 认知层
 
-## 项目简介
+Soul Agent 是系统入口。它接收用户自然语言任务后，会结合 `mock_data/soul` 中的用户画像、长期经历以及各 App 的行为观察信息，判断任务是否完整、是否需要授权、是否涉及外部可见动作。对于发布小红书、发送消息、删除数据、修改长期画像等高影响任务，Soul 会先通过 OS View 或命令行向用户确认，再生成 enriched task。
 
-ORCA（On-device Reasoning Collaborative Agents）是一种 AIOS 的具体实现，其设计核心是**让 AI 真正懂用户**：系统不只会执行任务，还会记住你的习惯、语气偏好和生活经历，在每次交互中提供高度个性化的支持。
+### Camel Workforce 执行层
 
-系统由两个核心层组成：
+Workforce 接收 enriched task 后再进行拆解和调度。Coordinator 负责选择合适的 Worker，Task Agent 负责子任务规划，各 App Agent 只处理自己应用边界内的工具调用。执行层不需要理解 Hermes 的内部记忆结构，只需要接收清晰的目标、约束、应用范围和确认状态。
 
-- **Soul Agent**：系统级个性化智能体，深度理解用户的身份、习惯和偏好，负责将用户任务转化为富含个性化上下文的执行指令，并在任务完成后积累用户经验。
-- **ORCA Workforce**：强大的多智能体执行引擎，由协调智能体、任务分解智能体和各类 App 工作智能体组成，接收 Soul Agent 的指令并完成所有实际操作。
+### App 工具层
 
-ORCA 还支持 **设备间直连消息（D2D）**：不同用户的 ORCA 节点可以直接通信，系统自动决策是否回复、如何回复，并以用户本人的语气完成整个交互。
-
----
-
-## 核心架构
-
-系统由三层构成：**Soul 个性化层 → ORCA Workforce 执行层 → App 工具层**。
-
-用户发起的任务首先经过 Soul Agent 的个性化富化，再交由 Workforce 拆解并分派给各 App 智能体并行执行；D2D 外来消息经由 Listener 接入，同样走完整的 Soul → Workforce 流程后自动回复对方。
-
-<div align="center">
-<img src="images/architecture.png" alt="ORCA System Architecture" width="700"/>
-</div>
-
----
-
-## 功能特性
-
-### Soul Agent — 个性化核心
-
-- **灵魂档案（Soul Profile）**：持久化记录用户的身份、性格、偏好和生活习惯，所有任务均以此为基础进行个性化。
-- **任务富化（Task Enrichment）**：将用户的原始请求转化为包含完整个性化上下文的 enriched task，交由 Workforce 执行，无需用户反复说明偏好。
-- **经验积累**：任务完成后自动回顾执行记录，将新的偏好和生活经历写入灵魂档案，支持持续成长。
-- **App 个性化感知**：可查询各 App 的行为模式观测数据（如记笔记的风格、联系人关系背景），但不直接读取 App 的原始数据内容——原始数据由 Workforce 的 App 智能体负责。
-
-### ORCA Workforce — 多智能体执行引擎
-
-- **并行任务执行**：Coordinator Agent 将复杂任务分配给多个 Worker 并行处理，Task Agent 负责拆解子任务并管理依赖关系。
-- **App 原生集成**：每个 Worker 对应一个 App（通讯录、备忘录、相册等），拥有该 App 的完整数据访问能力。
-- **结构化输出处理**：使用结构化输出 handler，确保子任务结果的可靠传递。
-
-### D2D 通信协议
-
-- **统一通信接口**：基于 TCP 的 ORCA 节点间直连通信，发送方通过 `communication_tool` 投递消息；对方若需回复，同样使用 `communication_tool` 发回，消息自动流入发送方的 ORCA Listener，无需轮询。
-- **自动化响应决策**：收到外部消息时，Soul Agent 结合用户档案和联系人背景自动决策是否回复、如何回复。
-- **消息历史记录**：所有 D2D 通信自动记录到通讯录历史，供后续个性化参考。
+各 App 工具读取 `mock_data` 中的演示数据，或写入本地模拟结果。例如相册工具检索照片，小红书工具生成本地发布记录，通讯录工具维护 D2D 消息历史，备忘录工具读写笔记。默认演示不连接真实手机系统或真实第三方账号。
 
 <div align="center">
-<img src="images/d2d_sequence.png" alt="D2D Message Flow" width="700"/>
+  <img src="images/architecture.png" alt="ORCA architecture" width="720"/>
 </div>
-
----
-
-## 智能体生态
-
-### 系统级智能体
-
-| 智能体 | 角色 | 核心能力 |
-|--------|------|----------|
-| **Soul Agent** | 个性化层 | 灵魂档案读写、任务富化、经验积累 |
-| **Coordinator Agent** | 执行协调 | 任务分发、Worker 调度、结果汇总 |
-| **Task Agent** | 任务管理 | 任务拆解、依赖分析、子任务跟踪 |
-
-### App 工作智能体
-
-| 智能体 | 对应 App | 核心工具 |
-|--------|----------|----------|
-| **Contactors Agent** | 通讯录 | `get_contacts_profile` · `communication_tool` |
-| **Notes Agent** | 备忘录 | `search_my_notes` |
-| **Photos Agent** | 相册 | `search_photos` · `get_image_information` |
-| **XiaoHongShu Agent** | 小红书 | `publish_xhs_post` |
-| **Xiecheng Agent** | 携程旅行 | `search_attractions` · `search_guides` · `search_orders` |
-| **Search Agent** | 浏览器 | `search_exa` · `HybridBrowserToolkit` |
-| **Document Agent** | 文档处理 | 文件读写、Office 文档、数据可视化（兜底方案）|
-| **Developer Agent** | 开发工具 | 代码执行、终端操作（最终手段）|
-
----
 
 ## 快速开始
 
-### 1. 安装依赖
+### 1. 准备前置条件
 
-**安装 AIOS 核心框架**
+推荐环境：
 
-```bash
-cd aios_soul/camel-master
-pip install -e .
-cd ..
-```
+- Linux/macOS
+- Conda，或本机可用的 Python 3.11
+- 本地 Hermes agent 源码目录，默认位置为 `$HOME/.hermes/hermes-agent`
+- 可访问的 OpenAI-compatible 模型服务
 
-**安装项目依赖**
-
-```bash
-pip install -r requirements.txt
-```
-
-**安装浏览器工具链**（Search Agent 依赖，可选）
+如果 Hermes agent 不在默认位置，先设置：
 
 ```bash
-cd camel-master/camel/toolkits/hybrid_browser_toolkit/ts  # AIOS 内置浏览器工具
-npm install && npm run build
-npx playwright install
+export AIOS_HERMES_AGENT_ROOT=/path/to/hermes-agent
 ```
 
-### 2. 配置 API Keys
+### 2. 创建统一环境
 
 ```bash
-cp .env .env
+cd aios_soul
+./scripts/setup_aios_hermes.sh
 ```
 
-编辑 `.env`：
+脚本会优先创建或更新 Conda 环境 `aios-hermes`。如果没有 Conda，会尝试用 `python3.11` 创建 `.venv-aios-hermes`。这一个环境会同时安装：
 
-```env
-# 大模型 API
-OPENAI_API_KEY=your_openai_api_key
-url=your_openai_endpoint
+- 本项目依赖
+- 本地 `camel-master`
+- 本地 Hermes agent 的 `acp` 和 `web` 依赖
 
-# Qwen 模型用于视觉模型
-QWEN_API_KEY=your_qwen_api_key
-url_qwen=your_qwen_endpoint
+脚本首次运行时会从 `example.env` 复制出 `.env`。`.env` 是本机配置文件，已经被 `.gitignore` 忽略。
 
-# 网络搜索（Search Agent）
-EXA_API_KEY=your_exa_api_key
+### 3. 进入环境并检查
+
+如果使用 Conda：
+
+```bash
+conda activate aios-hermes
+python scripts/hermes_doctor.py
 ```
 
-### 3. 配置用户身份（mock_data）
+如果使用本地 venv：
 
-ORCA 的所有个性化数据存放在 `mock_data/` 目录下，结构如下：
-
+```bash
+.venv-aios-hermes/bin/python scripts/hermes_doctor.py
 ```
+
+检查通过时会输出 `Hermes Soul runtime looks usable.`。如果提示找不到 Hermes agent，确认 `AIOS_HERMES_AGENT_ROOT` 指向了包含 `pyproject.toml` 的 Hermes agent 源码目录。
+
+### 4. 启动 OS View
+
+```bash
+./scripts/run_os_view_hermes.sh
+```
+
+启动后访问：
+
+```text
+http://127.0.0.1:5001
+```
+
+脚本会自动设置：
+
+- `AIOS_AGENT_RUNTIME=hermes`
+- `AIOS_HERMES_PYTHON` 为当前 Python 3.11 环境
+- `AIOS_HERMES_RUNTIME_DIR` 为项目内的 `runtime/hermes`
+
+因此 setup 完成后，通常只需要进入 `aios-hermes` 环境再运行启动脚本。启动脚本本身也会尝试自动激活 Conda 环境。
+
+### 5. 启动命令行 Demo
+
+```bash
+./scripts/run_demo_hermes.sh
+```
+
+该入口运行 `demo/aios_demo.py`，适合快速验证 Hermes Soul 是否能先生成 enriched task，再由 Camel Workforce 执行。
+
+## 环境变量
+
+主要配置项在 `.env` 中维护。
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `AIOS_AGENT_RUNTIME` | `hermes` | Soul Agent runtime，支持 `hermes` 或 `camel` |
+| `AIOS_HERMES_FALLBACK` | `on_error` | Hermes 失败时是否回退到 Camel Soul，可选 `never`、`on_error`、`on_empty`、`always` |
+| `AIOS_HERMES_HOME` | `$HOME/.hermes` | Hermes 全局工作目录，留空时由脚本补默认值 |
+| `AIOS_HERMES_AGENT_ROOT` | `$HOME/.hermes/hermes-agent` | Hermes agent 源码目录 |
+| `AIOS_HERMES_RUNTIME_DIR` | `runtime/hermes` | 本项目的 Hermes 运行数据目录 |
+| `AIOS_HERMES_MAX_TURNS` | `12` | 限制 Hermes Soul 的单任务轮数 |
+| `AIOS_SOUL_MAX_CLARIFICATIONS` | `2` | Soul 单任务最多主动澄清次数 |
+| `AIOS_SOUL_DEFAULT_REPLY` | `你自己发挥` | 非交互场景下的默认用户回复 |
+| `AIOS_AUTO_CONFIRM_PUBLISH` | `1` | Demo 中是否自动确认小红书模拟发布 |
+| `ORCA_PORT` | `5001` | OS View 服务端口 |
+| `AIOS_MODEL_TYPE` | `qwen3.6-27b` | 默认模型名 |
+| `url` / `OPENAI_BASE_URL` | 项目默认 endpoint | OpenAI-compatible 模型服务地址 |
+| `OPENAI_API_KEY` / `QWEN_API_KEY` | 空 | 模型服务 key，本机写入 `.env` |
+
+模型配置由 `agents/backend_model.py` 统一读取。当前默认模型名为 qwen3.6-27b，默认 endpoint 指向项目测试服务；API key 不写入仓库，需要在本机 `.env` 中配置。
+
+## 项目结构
+
+```text
+aios_soul/
+├── agents/                    # Soul、Coordinator、Task 和各 App Agent
+│   ├── soul_agent.py          # runtime factory：Camel Soul 或 Hermes Soul
+│   ├── hermes_runtime.py      # AIOS 侧 Hermes Soul 封装
+│   ├── runtime.py             # runtime 开关读取
+│   └── backend_model.py       # 统一模型配置
+├── camel-master/              # Camel/AIOS 多智能体执行框架
+├── demo/
+│   ├── aios_demo.py           # 命令行任务入口
+│   ├── aios_listener.py       # D2D 消息监听入口
+│   └── os_view/               # 手机式 UI 和 Flask 后端
+├── hermes_platform/           # Hermes platform facade、agent 管理和 world model 封装
+├── mcp_servers/
+│   └── soul_mcp_server.py     # Hermes Soul 可调用的 MCP 工具服务
+├── mock_data/                 # 演示用户、App 数据和模拟结果
+├── scripts/
+│   ├── setup_aios_hermes.sh   # 一键创建/更新统一环境
+│   ├── run_os_view_hermes.sh  # Hermes Soul + OS View 启动入口
+│   ├── run_demo_hermes.sh     # Hermes Soul + CLI Demo 启动入口
+│   ├── hermes_doctor.py       # Hermes 环境检查
+│   └── load_photos.py         # 相册数据预处理
+├── tools/                     # App 工具和 Soul 数据访问工具
+├── test/                      # Agent 单元测试
+├── README_HERMES.md           # Hermes Soul 专项说明
+├── environment-aios-hermes.yml
+├── requirements-unified-py311.txt
+└── example.env
+```
+
+## Mock 数据
+
+演示数据集中在 `mock_data/`：
+
+```text
 mock_data/
-├── soul/               # 当前用户灵魂档案
-│   ├── soul.json       # 身份、性格、偏好、习惯
-│   └── experiences.json
-├── contactors/         # 通讯录数据
-│   ├── contactors_profiles.md   # 联系人档案（个性化层可见）
-│   └── contactors_data.json     # 消息历史
-├── notes/              # 备忘录数据
-│   ├── notes_soul.md            # 备忘录行为观测（个性化层可见）
-│   └── notes_data.json          # 笔记内容
-├── photos/             # 相册数据（含图片文件）
-├── xiaohongshu/        # 小红书行为观测
-└── xiecheng/           # 携程数据（景点、攻略、订单）
+├── soul/              # 当前用户画像和长期经历
+├── contactors/        # 通讯录和消息历史
+├── notes/             # 备忘录
+├── photos/            # 相册图片和图片索引
+├── xiaohongshu/       # 小红书偏好和模拟发布记录
+├── xiecheng/          # 携程订单、攻略和景点数据
+└── aihua/             # 艾华老师示例数据集
 ```
 
-**项目已内置 艾华老师 的完整示例数据集**，存放在 `mock_data/aihua/`。如需切换到艾华身份，将该目录下各子文件夹的内容覆盖到 `mock_data/` 对应位置即可。
+`mock_data/soul/soul.json` 是当前服务对象的核心画像。Hermes Soul 会把该画像转换为可读上下文，也会通过 MCP 工具读取完整画像和经历列表。任务完成后，如果产生新的稳定偏好或经历，可以写回 `mock_data/soul`。
 
-> **如需创建新用户身份**：按照上述目录结构，编辑 `mock_data/soul/soul.json`（填写姓名、ORCA 节点地址、身份信息等），以及 `mock_data/contactors/contactors_profiles.md`（联系人档案），其余数据文件按需填充。
-
-**加载照片数据**（Photos Agent 需要对图片进行视觉分析，首次使用需运行）：
+相册首次使用前可以运行：
 
 ```bash
 python scripts/load_photos.py
 ```
 
----
+## OS View 使用方式
 
-### 4. 运行
+OS View 启动后，浏览器中会显示一个手机式界面。右侧悬浮按钮打开小艺面板，用户可以输入自然语言任务。典型任务示例：
 
-#### 模式一：OS View 界面模式（推荐）
-
-启动仿鸿蒙手机界面，通过浏览器与 AIOS 交互：
-
-```bash
-python demo/os_view/server.py
+```text
+我去云南玩了，帮我看看相册有没有风景照，去携程看看旅游攻略，写个帖子发到小红书。
 ```
 
-打开浏览器访问 **http://127.0.0.1:5001**（局域网内其他设备也可通过显示的 Network 地址访问，兼容手机浏览器）。
+推荐观察点：
 
-界面功能：
-- **小艺助手**：点击屏幕右侧悬浮圆圈打开，输入任务后 AIOS 全流程在聊天框中实时呈现
-  - 居中的系统提示（灰色标签）：小艺正在询问哪个 App、协调进度等
-  - AI 气泡：workforce 执行结果和小艺的最终回复
-  - 支持多任务并行，左右滑动切换不同对话
-- **确认弹窗**：发送 D2D 消息、发布小红书、修改重要个人信息时，屏幕下方弹出确认框（绿色确认 / 红色取消）
-- **消息通知**：收到 D2D 来信时，屏幕顶部自动弹出横幅通知
-- **各 App 界面**：通讯录、备忘录、相册、小红书、携程、浏览器等均已集成真实数据
+- Hermes Soul 是否先理解用户意图并补齐任务上下文。
+- 对发布、发送消息等外部可见动作，Soul 是否在 handoff 前主动澄清或确认。
+- Workforce 是否把任务拆给相册、携程、小红书等对应 App Agent。
+- App Agent 是否只在自身应用边界内执行。
+- 最终结果是否回到 OS View，并记录任务状态。
 
-**修改端口**：在 `.env` 中设置 `ORCA_PORT=xxxx`（默认 `5001`），`aios_listener.py` 会自动读取同一变量。
+## D2D 消息监听
 
-> 若同时运行 `aios_listener.py`，收到的 D2D 消息会自动推送到界面并在小艺面板中展示任务进度。
-
----
-
-#### 模式二：命令行任务模式
-
-无需界面，直接在终端运行，所有交互通过命令行完成：
-
-```bash
-python demo/aios_demo.py
-```
-
-编辑 `demo/aios_demo.py` 底部的 `_task` 变量来自定义任务：
-
-```python
-# 跨 App 任务
-_task = "我去云南玩了，帮我看看相册有没有风景照，去携程看看旅游攻略，写个帖子发到小红书"
-
-# D2D 消息发送
-_task = "帮我问问艾华老师，下午几点开会来着"
-```
-
-需要用户确认的操作（如发送消息、发布帖子）会在命令行提示 `yes/no`。
-
-#### 模式三：D2D 消息监听
+命令行启动：
 
 ```bash
 python demo/aios_listener.py
 ```
 
-监听地址自动从 `mock_data/soul/soul.json` 的 `aios_phone_number` 字段读取。收到其他 ORCA 节点的消息后，系统会：
+监听地址来自 `mock_data/soul/soul.json` 中的 `aios_phone_number` 字段。收到外部消息后，系统会进入同一条 Soul 到 Workforce 流程，由 Soul 判断是否回复、如何回复，再由执行层查询数据并完成发送。
 
-1. Soul Agent 结合用户档案和联系人背景进行个性化决策
-2. Workforce 查询相关 App 数据（备忘录、通讯录等）
-3. 以用户本人的语气和风格自动回复对方
+## 测试与检查
 
-若 OS View 服务正在运行，Listener 会自动将任务路由到界面展示；否则回退到命令行模式。
+轻量语法检查：
 
----
-
-## 项目结构
-
+```bash
+python -m py_compile \
+  agents/backend_model.py \
+  agents/soul_agent.py \
+  agents/hermes_runtime.py \
+  agents/runtime.py \
+  mcp_servers/soul_mcp_server.py \
+  scripts/hermes_doctor.py
 ```
-orca/
-├── agents/                      # 智能体定义
-│   ├── soul_agent.py            # Soul Agent（个性化核心）
-│   ├── coordinate_agent.py      # 协调智能体
-│   ├── task_agent.py            # 任务分解智能体
-│   ├── contactors_agent.py      # 通讯录 App 智能体
-│   ├── notes_agent.py           # 备忘录 App 智能体
-│   ├── photos_agent.py          # 相册 App 智能体
-│   ├── xiaohongshu_agent.py     # 小红书 App 智能体
-│   ├── xiecheng_agent.py        # 携程 App 智能体
-│   ├── search_agent.py          # 搜索智能体
-│   ├── document_agent.py        # 文档处理智能体
-│   ├── developer_agent.py       # 开发者智能体
-│   └── backend_model.py         # 模型配置
-│
-├── tools/                       # 工具包
-│   ├── soul_toolkit.py          # 灵魂档案读写
-│   ├── contactors_toolkit.py    # 通讯录 + D2D 通信
-│   ├── notes_toolkit.py         # 备忘录检索
-│   ├── photos_toolkit.py        # 相册检索
-│   ├── xiaohongshu_toolkit.py   # 小红书发布
-│   └── xiecheng_toolkit.py      # 携程查询
-│
-├── demo/
-│   ├── aios_demo.py             # 命令行任务入口
-│   ├── aios_listener.py         # D2D 消息监听入口
-│   └── os_view/                 # 仿鸿蒙手机界面
-│       ├── server.py            # Flask 后端（PORT 可在此修改，默认 5001）
-│       ├── index.html           # 手机壳 + 界面结构
-│       ├── main.js              # 系统逻辑（小艺多会话、确认弹窗、通知等）
-│       ├── style.css            # 玻璃态 iOS 风格样式
-│       └── ui_bridge.py        # AIOS ↔ 界面的消息/确认通信桥
-│
-├── mock_data/                   # 活跃用户数据（当前身份）
-│   ├── soul/                    # 灵魂档案
-│   ├── contactors/              # 通讯录
-│   ├── notes/                   # 备忘录
-│   ├── photos/                  # 相册（含图片文件）
-│   ├── xiaohongshu/             # 小红书
-│   ├── xiecheng/                # 携程
-│   └── aihua/                   # 预封装：艾华老师完整数据集
-│
-├── scripts/
-│   └── load_photos.py           # 照片视觉分析 & 索引构建
-│
-├── camel-master/                # AIOS 核心多智能体框架
-├── example.env                  # 环境变量模板
-└── requirements.txt
+
+运行单元测试：
+
+```bash
+python -m pytest test/agent
 ```
+
+部分测试和 Demo 会调用模型服务或读取 mock 数据。若模型服务不可用，先运行 `python scripts/hermes_doctor.py` 和一个最小 CLI Demo 定位环境问题。
+
+## 常见问题
+
+### setup 后是否只需要一个环境？
+
+是。当前推荐使用统一的 Python 3.11 环境 `aios-hermes`。AIOS 业务代码、Camel Workforce、Hermes client 代码和 Hermes ACP 子进程都通过同一个 Python 运行。旧的 AIOS Python 3.10 环境不再适合作为 Hermes Soul 模式的主环境。
+
+### 为什么只让 Soul 使用 Hermes？
+
+Hermes 具备更强的长期记忆、角色化上下文和主动澄清能力，适合做系统入口的认知中枢。App Agent 更适合保持轻量、边界清晰、工具权限明确。把每个 App Agent 都替换为 Hermes 会让系统变重，也会增加权限扩散和状态不一致风险。
+
+### Hermes 失败后为什么任务还能继续？
+
+默认 `AIOS_HERMES_FALLBACK=on_error`。当 Hermes Soul 报错时，系统会回退到原 Camel Soul，以保证 Demo 可跑。严格验证 Hermes 时可以改为：
+
+```env
+AIOS_HERMES_FALLBACK=never
+```
+
+### 小红书发布会真的发到平台吗？
+
+不会。当前小红书工具会在本地生成模拟发布 JSON。新生成的 `mock_data/xiaohongshu/xhs_post_*.json` 已被 `.gitignore` 忽略。
+
+### runtime 目录是否需要提交？
+
+不需要。`runtime/`、`demo/working_dir/`、`workspace/`、Hermes 日志和临时任务状态都是运行产物，已经被 `.gitignore` 忽略。
+
+## 提交前检查
+
+提交到外部仓库前建议执行：
+
+```bash
+git status --short
+python scripts/hermes_doctor.py
+python -m py_compile agents/backend_model.py agents/soul_agent.py agents/hermes_runtime.py agents/runtime.py
+```
+
+确认 `.env`、`runtime/`、`demo/working_dir/`、`__pycache__/`、新生成的 `xhs_post_*.json` 没有进入 Git 状态。
+
+如果要推送到 Await-987 名下仓库，可在本地确认仓库地址后执行：
+
+```bash
+git remote add await git@github.com:Await-987/aios_soul.git
+git push -u await main
+```
+
+如果远端仓库名称不是 `aios_soul`，把 URL 中的仓库名替换为实际名称。

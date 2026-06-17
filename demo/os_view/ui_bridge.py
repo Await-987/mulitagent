@@ -171,6 +171,46 @@ def respond_confirm(session_id: str, answer: bool) -> bool:
 # Free-text ask gate  (called from tools, blocks the calling thread)
 # ---------------------------------------------------------------------------
 
+def ask_user_for_session(sid: str, question: str, timeout: float = 300.0) -> str:
+    """Like :func:`ask_user` but with explicit session id.
+
+    Used when the caller is not in the request ContextVar (e.g. an IPC
+    endpoint serving the Hermes subprocess bridge).
+    """
+    if not sid:
+        return ''
+
+    ask_id = uuid.uuid4().hex[:8]
+    event = threading.Event()
+    result_box: list = [None]
+
+    with _lock:
+        s = _sessions.get(sid)
+        if not s:
+            return ''
+        if s.get('cancelled') or s.get('status') == 'done':
+            return ''
+        s['messages'].append({
+            'type': 'ask',
+            'id': ask_id,
+            'text': question,
+        })
+        s['pending_ask'] = {
+            'id': ask_id,
+            'event': event,
+            'result': result_box,
+        }
+
+    event.wait(timeout=timeout)
+
+    with _lock:
+        s = _sessions.get(sid)
+        if s and (s.get('pending_ask') or {}).get('id') == ask_id:
+            s['pending_ask'] = None
+
+    return result_box[0] or ''
+
+
 def ask_user(question: str) -> str:
     """Show a question as an AI chat bubble and block until the user replies.
 
@@ -193,36 +233,7 @@ def ask_user(question: str) -> str:
         except (EOFError, UnicodeDecodeError):
             return ''
 
-    ask_id = uuid.uuid4().hex[:8]
-    event = threading.Event()
-    result_box: list = [None]
-
-    with _lock:
-        s = _sessions.get(sid)
-        if not s:
-            return ''
-        # If the session is already done or cancelled, skip silently.
-        if s.get('cancelled') or s.get('status') == 'done':
-            return ''
-        s['messages'].append({
-            'type': 'ask',
-            'id': ask_id,
-            'text': question,
-        })
-        s['pending_ask'] = {
-            'id': ask_id,
-            'event': event,
-            'result': result_box,
-        }
-
-    event.wait(timeout=300)   # 5-minute safety timeout
-
-    with _lock:
-        s = _sessions.get(sid)
-        if s and (s.get('pending_ask') or {}).get('id') == ask_id:
-            s['pending_ask'] = None
-
-    return result_box[0] or ''
+    return ask_user_for_session(sid, question)
 
 
 def respond_ask(session_id: str, reply: str) -> bool:

@@ -1,9 +1,8 @@
-import json
-from pathlib import Path
 from typing import List
 
 from camel.toolkits import FunctionTool
 from camel.toolkits.base import BaseToolkit
+from .soul_store import SoulStore
 
 try:
     from demo.os_view import ui_bridge as _ui_bridge
@@ -14,11 +13,7 @@ except ImportError:
 class SoulToolkit(BaseToolkit):
     def __init__(self):
         super().__init__()
-        base_dir = Path(__file__).resolve().parent.parent
-        soul_dir = base_dir / "mock_data" / "soul"
-        self.soul_path = soul_dir / "soul.json"
-        self.experiences_path = soul_dir / "experiences.json"
-        self.task_status_path = base_dir / "demo" / "working_dir" / "task_status.md"
+        self.store = SoulStore()
 
     def get_user_soul(self) -> str:
         """
@@ -27,17 +22,7 @@ class SoulToolkit(BaseToolkit):
         Returns the personal info from soul.json and experience records from
         experiences.json, combined in Markdown format.
         """
-        with open(self.soul_path, encoding="utf-8") as f:
-            soul_data = json.load(f)
-        with open(self.experiences_path, encoding="utf-8") as f:
-            exp_data = json.load(f)
-
-        content = "### User Soul Profile\n\n"
-        content += "## Personal Info\n\n"
-        content += json.dumps(soul_data, ensure_ascii=False, indent=2)
-        content += "\n\n## Experience Records\n\n"
-        content += json.dumps(exp_data, ensure_ascii=False, indent=2)
-        return content
+        return self.store.get_user_soul()
 
     def get_task_status(self) -> str:
         """
@@ -46,12 +31,9 @@ class SoulToolkit(BaseToolkit):
         Used after workforce completion so Soul Agent can decide whether to
         update the user's soul profile based on what happened.
         """
-        if not self.task_status_path.exists():
-            print(f"task_status.md not found at: {self.task_status_path}")
-            return f"task_status.md not found at: {self.task_status_path}"
-        with open(self.task_status_path, encoding="utf-8") as f:
-            print(f"task_status.md found at: {self.task_status_path}")
-            return f.read()
+        result = self.store.get_task_status()
+        print(result if result.startswith("task_status.md not found") else "task_status.md found")
+        return result
 
     def update_soul_profile(self, key: str, value: str) -> str:
         """
@@ -83,39 +65,25 @@ class SoulToolkit(BaseToolkit):
         Returns:
             str: Result message.
         """
-        try:
-            parsed_value = json.loads(value)
-        except (json.JSONDecodeError, ValueError):
-            parsed_value = value
-
-        with open(self.soul_path, encoding="utf-8") as f:
-            current_soul = json.load(f)
-
         protected_fields = ["姓名", "aios_phone_number"]
-        if key in protected_fields and current_soul.get(key) != parsed_value:
+        if key in protected_fields:
             print(f'\n[Soul Agent] Protected field "{key}" is about to be changed:')
-            print(f'  Current : {current_soul.get(key)}')
-            print(f'  New     : {parsed_value}')
             if _ui_bridge and _ui_bridge.get_session_id():
                 confirmed = _ui_bridge.request_confirm(
                     f"修改重要字段「{key}」",
-                    details=f"当前值：{current_soul.get(key)}\n新值：{parsed_value}",
+                    details=f"新值：{value}",
                 )
             else:
                 answer = input("Confirm this change? (yes/no): ").strip().lower()
                 confirmed = answer in ("yes", "y")
             if not confirmed:
                 return f'User declined to modify protected field "{key}". soul.json was not updated.'
+            result = self.store.update_soul_profile(key, value, confirm_protected=True)
+        else:
+            result = self.store.update_soul_profile(key, value)
 
-        is_new_key = key not in current_soul
-        current_soul[key] = parsed_value
-
-        with open(self.soul_path, "w", encoding="utf-8") as f:
-            json.dump(current_soul, f, ensure_ascii=False, indent=2)
-
-        action = "added" if is_new_key else "updated"
-        print(f'[SoulToolkit] soul.json {action}: field "{key}"')
-        return f'Field "{key}" has been successfully {action} in soul.json.'
+        print(f'[SoulToolkit] {result}')
+        return result
 
     def append_experience(self, experience_json: str) -> str:
         """
@@ -135,22 +103,9 @@ class SoulToolkit(BaseToolkit):
         Returns:
             str: Result message.
         """
-        try:
-            new_exp = json.loads(experience_json)
-        except json.JSONDecodeError as e:
-            return f"Error: invalid JSON — {e}"
-
-        with open(self.experiences_path, encoding="utf-8") as f:
-            experiences = json.load(f)
-
-        experiences.append(new_exp)
-
-        with open(self.experiences_path, "w", encoding="utf-8") as f:
-            json.dump(experiences, f, ensure_ascii=False, indent=2)
-
-        name = new_exp.get("名称", "(unnamed)")
-        print(f"[SoulToolkit] New experience appended to experiences.json: {name}")
-        return f"New experience '{name}' has been successfully appended to experiences.json."
+        result = self.store.append_experience(experience_json)
+        print(f"[SoulToolkit] {result}")
+        return result
 
     def get_tools(self) -> List[FunctionTool]:
         return [
